@@ -1,0 +1,44 @@
+# Copy this file to config.yaml (or point --config at your own copy) and fill
+# in the connection details for your environment. Do NOT commit config.yaml
+# with real credentials - keep it out of version control.
+
+databases:
+  # Source Patricia instance ("Renewals")
+  renewals:
+    driver: "ODBC Driver 17 for SQL Server"
+    server: "SQLSRV01\\REN01"
+    database: "Patricia"
+    trusted_connection: true   # set false and provide username/password for SQL auth
+    username: null
+    password: null
+
+  # Target Patricia instance ("Main")
+  main:
+    driver: "ODBC Driver 17 for SQL Server"
+    server: "SQLSRV01\\MAIN01"
+    database: "Patricia_Main_Live"
+    trusted_connection: true
+    username: null
+    password: null
+
+paths:
+  # Root of the source document store. Must be reachable from the machine
+  # running this tool (UNC path). Can be overridden per run with --source-root.
+  source_root: "\\\\brifile\\Renewals\\Patricia\\documents"
+
+# Folder-naming convention used to build the four-level case path:
+#   <case_type>/<family_number>/<country>/<case_number_extension>
+# These are ASSUMPTIONS based on the field widths described for the task.
+# Verify them against a real listing run (tool `list`/dry-run output) before
+# doing any live copy, and adjust here if the real folder names differ.
+folder_format:
+  case_type_zero_pad: false   # true -> "02" instead of "2"
+  case_type_width: 2
+  family_number_zero_pad: true
+  family_number_width: 6
+  country_uppercase: true
+  extension_uppercase: false
+
+logging:
+  # Where the JSONL run log and generated reports are written.
+  log_dir: "./logs"

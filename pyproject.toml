@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ren-to-man"
+version = "0.1.0"
+description = "Copy Patricia documents from the Renewals instance to the Main instance"
+requires-python = ">=3.10"
+dependencies = [
+    "pyodbc>=5.0",
+    "PyYAML>=6.0",
+    "click>=8.1",
+]
+
+[project.scripts]
+ren-to-man = "ren_to_man.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
