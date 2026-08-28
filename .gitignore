@@ -5,3 +5,8 @@ __pycache__/
 config.yaml
 logs/
 .pytest_cache/
+
+# PowerShell variant
+powershell/RenToMan.config.psd1
+powershell/logs/
+testResults.xml
