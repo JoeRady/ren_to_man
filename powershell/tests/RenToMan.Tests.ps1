@@ -67,7 +67,14 @@ Describe 'New-RenToManPlanFromCsv' {
             }
         ) | Export-Csv -Path $mappingCsv -NoTypeInformation -Encoding UTF8
 
+        Write-Host "DEBUG tmpRoot=$tmpRoot"
+        Write-Host "DEBUG sourceCsv exists=$(Test-Path -LiteralPath $sourceCsv) content:"
+        Get-Content -LiteralPath $sourceCsv | Write-Host
+        Write-Host "DEBUG mappingCsv exists=$(Test-Path -LiteralPath $mappingCsv) content:"
+        Get-Content -LiteralPath $mappingCsv | Write-Host
+
         $plan = New-RenToManPlanFromCsv -SourceDocumentsCsvPath $sourceCsv -CaseMappingCsvPath $mappingCsv
+        Write-Host "DEBUG plan type=$($plan.GetType().FullName) count=$($plan.Count) plan=$($plan | Out-String)"
 
         $plan.Count | Should -Be 1
         Test-RenToManCopyable $plan[0] | Should -Be $true
