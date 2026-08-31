@@ -2,44 +2,20 @@
 <#
     Run with:  Invoke-Pester -Path .\powershell\tests\RenToMan.Tests.ps1
 
-    These tests cover only the pure logic (path building, plan building,
-    copy behaviour against a local temp folder) - no database connection is
-    needed. Written for this repo's Linux dev sandbox to author against, but
-    was NOT executed there (no pwsh available) - run it on your Windows
-    machine before relying on it, and report back anything that doesn't
-    parse or pass.
+    These tests cover only the pure logic (CSV joining, script generation,
+    copy behaviour of the generated script against a local temp folder) - no
+    database connection is needed, and none of the code under test uses
+    System.Data.SqlClient, System.Text.StringBuilder, or generic collections,
+    so this also runs fine under PowerShell Constrained Language Mode.
+
+    Written for this repo's Linux dev sandbox to author against, but was NOT
+    executed there (no pwsh available) - run it on your Windows machine
+    before relying on it, and report back anything that doesn't parse or
+    pass.
 #>
 
 BeforeAll {
     Import-Module (Join-Path $PSScriptRoot '..\RenToMan.psd1') -Force
-}
-
-Describe 'Get-CaseFolderPath' {
-    It 'builds the default (non-zero-padded case type) path' {
-        $fmt = @{
-            CaseTypeZeroPad = $false; CaseTypeWidth = 2
-            FamilyNumberZeroPad = $true; FamilyNumberWidth = 6
-            CountryUppercase = $true; ExtensionUppercase = $false
-        }
-        $case = [pscustomobject]@{ CASE_TYPE_ID = 2; CASE_NUMBER = 666777; STATE_ID = 'de'; CASE_NUMBER_EXTENSION = 'ep' }
-
-        $path = Get-CaseFolderPath -Root '\\brifile\Renewals\Patricia\documents' -CaseInfo $case -FolderFormat $fmt
-
-        $path | Should -Be '\\brifile\Renewals\Patricia\documents\2\666777\DE\ep'
-    }
-
-    It 'zero-pads the case type when configured' {
-        $fmt = @{
-            CaseTypeZeroPad = $true; CaseTypeWidth = 2
-            FamilyNumberZeroPad = $true; FamilyNumberWidth = 6
-            CountryUppercase = $true; ExtensionUppercase = $false
-        }
-        $case = [pscustomobject]@{ CASE_TYPE_ID = 2; CASE_NUMBER = 123; STATE_ID = 'US'; CASE_NUMBER_EXTENSION = 'A1' }
-
-        $path = Get-CaseFolderPath -Root 'D:\docs' -CaseInfo $case -FolderFormat $fmt
-
-        $path | Should -Be 'D:\docs\02\000123\US\A1'
-    }
 }
 
 Describe 'Get-LongPath' {
@@ -48,118 +24,6 @@ Describe 'Get-LongPath' {
     }
     It 'leaves short local paths untouched' {
         Get-LongPath 'C:\short\path.pdf' | Should -Be 'C:\short\path.pdf'
-    }
-}
-
-Describe 'New-RenToManPlan' {
-    BeforeAll {
-        $script:fmt = @{
-            CaseTypeZeroPad = $false; CaseTypeWidth = 2
-            FamilyNumberZeroPad = $true; FamilyNumberWidth = 6
-            CountryUppercase = $true; ExtensionUppercase = $false
-        }
-    }
-
-    It 'builds a copyable plan for a fully mapped document' {
-        $entries = @([pscustomobject]@{
-            DOC_LOG_ID = 1; CASE_ID = 100; LOGIN_ID = 'jsmith'
-            LOG_DATE = (Get-Date '2026-01-01'); DOC_NAME = 'Renewal Reminder'
-            DOC_FILE_NAME = 'reminder_ümlaut.pdf'; CATEGORY_ID = 5
-        })
-        $sourceCases = @{ 100 = [pscustomobject]@{ CASE_ID = 100; CASE_TYPE_ID = 2; CASE_NUMBER = 666777; STATE_ID = 'DE'; CASE_NUMBER_EXTENSION = 'EP' } }
-        $caseIdMap = @{ 100 = 200 }
-        $targetCases = @{ 200 = [pscustomobject]@{ CASE_ID = 200; CASE_TYPE_ID = 2; CASE_NUMBER = 666777; STATE_ID = 'DE'; CASE_NUMBER_EXTENSION = 'EP' } }
-
-        $plan = New-RenToManPlan -Entries $entries -SourceCases $sourceCases -CaseIdMap $caseIdMap `
-            -TargetCases $targetCases -SourceRoot '\\brifile\Renewals\Patricia\documents' `
-            -TargetRoot '\\brimain\Main\Patricia\documents' -FolderFormat $fmt
-
-        $plan.Count | Should -Be 1
-        Test-RenToManCopyable $plan[0] | Should -Be $true
-        $plan[0].SourcePath | Should -Be '\\brifile\Renewals\Patricia\documents\2\666777\DE\EP\reminder_ümlaut.pdf'
-        $plan[0].TargetPath | Should -Be '\\brimain\Main\Patricia\documents\2\666777\DE\EP\reminder_ümlaut.pdf'
-    }
-
-    It 'skips documents with no case-id mapping' {
-        $entries = @([pscustomobject]@{
-            DOC_LOG_ID = 1; CASE_ID = 100; LOGIN_ID = 'jsmith'
-            LOG_DATE = (Get-Date '2026-01-01'); DOC_NAME = 'Doc'; DOC_FILE_NAME = 'f.pdf'; CATEGORY_ID = 5
-        })
-        $sourceCases = @{ 100 = [pscustomobject]@{ CASE_ID = 100; CASE_TYPE_ID = 2; CASE_NUMBER = 666777; STATE_ID = 'DE'; CASE_NUMBER_EXTENSION = 'EP' } }
-
-        $plan = New-RenToManPlan -Entries $entries -SourceCases $sourceCases -CaseIdMap @{} `
-            -TargetCases @{} -SourceRoot '\\brifile\Renewals\Patricia\documents' `
-            -TargetRoot '\\brimain\Main\Patricia\documents' -FolderFormat $fmt
-
-        Test-RenToManCopyable $plan[0] | Should -Be $false
-        $plan[0].SkipReason | Should -Match 'mapping'
-    }
-
-    It 'skips documents whose source case is missing' {
-        $entries = @([pscustomobject]@{
-            DOC_LOG_ID = 1; CASE_ID = 999; LOGIN_ID = 'jsmith'
-            LOG_DATE = (Get-Date '2026-01-01'); DOC_NAME = 'Doc'; DOC_FILE_NAME = 'f.pdf'; CATEGORY_ID = 5
-        })
-
-        $plan = New-RenToManPlan -Entries $entries -SourceCases @{} -CaseIdMap @{} `
-            -TargetCases @{} -SourceRoot '\\brifile\Renewals\Patricia\documents' `
-            -TargetRoot '\\brimain\Main\Patricia\documents' -FolderFormat $fmt
-
-        Test-RenToManCopyable $plan[0] | Should -Be $false
-        $plan[0].SkipReason | Should -Match 'source case'
-    }
-}
-
-Describe 'Copy-RenToManDocument' {
-    BeforeEach {
-        $script:tmpRoot = Join-Path ([System.IO.Path]::GetTempPath()) ([Guid]::NewGuid())
-        New-Item -ItemType Directory -Path $tmpRoot | Out-Null
-    }
-    AfterEach {
-        Remove-Item -LiteralPath $tmpRoot -Recurse -Force -ErrorAction SilentlyContinue
-    }
-
-    It 'copies a file with a non-ASCII name, creating target folders' {
-        $srcDir = Join-Path $tmpRoot 'src'
-        New-Item -ItemType Directory -Path $srcDir | Out-Null
-        $srcFile = Join-Path $srcDir 'ümlaut file.pdf'
-        Set-Content -LiteralPath $srcFile -Value 'hello' -Encoding UTF8
-
-        $dstFile = Join-Path $tmpRoot 'dst\2\666777\DE\EP\ümlaut file.pdf'
-
-        $planned = [pscustomobject]@{
-            DocLogId = 1; CaseId = 100; MainCaseId = 200; LogDate = $null
-            DocName = 'Doc'; DocFileName = 'ümlaut file.pdf'
-            SourcePath = $srcFile; TargetPath = $dstFile; SkipReason = $null
-        }
-
-        $result = Copy-RenToManDocument -Planned $planned
-
-        $result.Status | Should -Be 'copied'
-        Test-Path -LiteralPath $dstFile | Should -Be $true
-    }
-
-    It 'reports missing_source when the source file does not exist' {
-        $planned = [pscustomobject]@{
-            DocLogId = 1; CaseId = 100; MainCaseId = 200; LogDate = $null
-            DocName = 'Doc'; DocFileName = 'nope.pdf'
-            SourcePath = (Join-Path $tmpRoot 'does_not_exist.pdf')
-            TargetPath = (Join-Path $tmpRoot 'dst\nope.pdf'); SkipReason = $null
-        }
-
-        (Copy-RenToManDocument -Planned $planned).Status | Should -Be 'missing_source'
-    }
-
-    It 'reports skipped when the plan carries a SkipReason' {
-        $planned = [pscustomobject]@{
-            DocLogId = 1; CaseId = 100; MainCaseId = $null; LogDate = $null
-            DocName = 'Doc'; DocFileName = 'f.pdf'
-            SourcePath = $null; TargetPath = $null; SkipReason = 'no mapping'
-        }
-
-        $result = Copy-RenToManDocument -Planned $planned
-        $result.Status | Should -Be 'skipped'
-        $result.Message | Should -Be 'no mapping'
     }
 }
 
@@ -172,6 +36,66 @@ Describe 'ConvertTo-RenToManPsStringLiteral' {
 
     It 'renders $null for a null value' {
         ConvertTo-RenToManPsStringLiteral $null | Should -Be '$null'
+    }
+}
+
+Describe 'New-RenToManPlanFromCsv' {
+    BeforeEach {
+        $script:tmpRoot = Join-Path ([System.IO.Path]::GetTempPath()) ([Guid]::NewGuid())
+        New-Item -ItemType Directory -Path $tmpRoot | Out-Null
+    }
+    AfterEach {
+        Remove-Item -LiteralPath $tmpRoot -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
+    It 'joins source documents and case mapping into a copyable plan' {
+        $sourceCsv = Join-Path $tmpRoot 'source_documents.csv'
+        $mappingCsv = Join-Path $tmpRoot 'case_mapping.csv'
+
+        @(
+            [pscustomobject]@{
+                DOC_LOG_ID = 1; CASE_ID = 100; LOGIN_ID = 'jsmith'; LOG_DATE = '2026-01-01'
+                DOC_NAME = 'Renewal Reminder'; DOC_FILE_NAME = 'reminder_ümlaut.pdf'; CATEGORY_ID = 5
+                SOURCE_PATH = '\\brifile\Renewals\Patricia\documents\2\666777\DE\EP\reminder_ümlaut.pdf'
+            }
+        ) | Export-Csv -Path $sourceCsv -NoTypeInformation -Encoding UTF8
+
+        @(
+            [pscustomobject]@{
+                RENEWALS_CASE_ID = 100; MAIN_LIVE_CASE_ID = 200
+                TARGET_FOLDER = '\\brimain\Main\Patricia\documents\2\666777\DE\EP'
+            }
+        ) | Export-Csv -Path $mappingCsv -NoTypeInformation -Encoding UTF8
+
+        $plan = New-RenToManPlanFromCsv -SourceDocumentsCsvPath $sourceCsv -CaseMappingCsvPath $mappingCsv
+
+        $plan.Count | Should -Be 1
+        Test-RenToManCopyable $plan[0] | Should -Be $true
+        $plan[0].SourcePath | Should -Be '\\brifile\Renewals\Patricia\documents\2\666777\DE\EP\reminder_ümlaut.pdf'
+        $plan[0].TargetPath | Should -Be '\\brimain\Main\Patricia\documents\2\666777\DE\EP\reminder_ümlaut.pdf'
+    }
+
+    It 'skips documents with no matching row in the case mapping CSV' {
+        $sourceCsv = Join-Path $tmpRoot 'source_documents.csv'
+        $mappingCsv = Join-Path $tmpRoot 'case_mapping.csv'
+
+        @(
+            [pscustomobject]@{
+                DOC_LOG_ID = 1; CASE_ID = 100; LOGIN_ID = 'jsmith'; LOG_DATE = '2026-01-01'
+                DOC_NAME = 'Doc'; DOC_FILE_NAME = 'f.pdf'; CATEGORY_ID = 5
+                SOURCE_PATH = '\\brifile\...\f.pdf'
+            }
+        ) | Export-Csv -Path $sourceCsv -NoTypeInformation -Encoding UTF8
+
+        @() | Export-Csv -Path $mappingCsv -NoTypeInformation -Encoding UTF8
+        # Import-Csv needs a header row even for zero data rows.
+        Set-Content -Path $mappingCsv -Value '"RENEWALS_CASE_ID","MAIN_LIVE_CASE_ID","TARGET_FOLDER"' -Encoding UTF8
+
+        $plan = New-RenToManPlanFromCsv -SourceDocumentsCsvPath $sourceCsv -CaseMappingCsvPath $mappingCsv
+
+        $plan.Count | Should -Be 1
+        Test-RenToManCopyable $plan[0] | Should -Be $false
+        $plan[0].SkipReason | Should -Match 'mapping'
     }
 }
 
@@ -204,10 +128,14 @@ Describe 'New-RenToManCopyScript' {
         $genResult.ItemCount | Should -Be 1
         Test-Path -LiteralPath $scriptPath | Should -Be $true
 
-        # The generated script must not reference the module or any DB type.
+        # The generated script must be fully standalone: no DB types, no
+        # module dependency, and (for Constrained Language Mode) no
+        # StringBuilder / generic collection method calls.
         $content = Get-Content -LiteralPath $scriptPath -Raw
         $content | Should -Not -Match 'SqlConnection'
         $content | Should -Not -Match 'Import-Module'
+        $content | Should -Not -Match 'StringBuilder'
+        $content | Should -Not -Match 'Generic\.List'
 
         & $scriptPath -Force
 
@@ -232,5 +160,30 @@ Describe 'New-RenToManCopyScript' {
 
         $genResult.ItemCount | Should -Be 0
         $genResult.SkippedAtPlanning | Should -Be 1
+    }
+}
+
+Describe 'Write-RenToManCandidateCsv' {
+    It 'writes a CSV with the expected columns' {
+        $tmpRoot = Join-Path ([System.IO.Path]::GetTempPath()) ([Guid]::NewGuid())
+        New-Item -ItemType Directory -Path $tmpRoot | Out-Null
+        try {
+            $plan = @([pscustomobject]@{
+                DocLogId = 1; CaseId = 100; MainCaseId = 200; LogDate = '2026-01-01'
+                DocName = 'Doc'; DocFileName = 'f.pdf'
+                SourcePath = 'C:\src\f.pdf'; TargetPath = 'C:\dst\f.pdf'; SkipReason = $null
+            })
+            $csvPath = Join-Path $tmpRoot 'candidates.csv'
+
+            Write-RenToManCandidateCsv -Plan $plan -Path $csvPath
+
+            $rows = @(Import-Csv -LiteralPath $csvPath)
+            $rows.Count | Should -Be 1
+            $rows[0].DOC_LOG_ID | Should -Be '1'
+            $rows[0].TARGET_PATH | Should -Be 'C:\dst\f.pdf'
+        }
+        finally {
+            Remove-Item -LiteralPath $tmpRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
     }
 }

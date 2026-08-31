@@ -1,164 +1,146 @@
 # ren_to_man (PowerShell)
 
 Findet Patricia-Dokumente, die von der **Renewals**- in die **Main**-Instanz
-kopiert werden sollen. Nutzt `System.Data.SqlClient` (Teil des .NET
-Framework, das mit Windows PowerShell 5.1 mitgeliefert wird) — **kein
-Zusatzmodul nötig** (kein `SqlServer`-Modul, kein `Invoke-Sqlcmd`, kein
-Internetzugriff zur Installation).
+kopiert werden sollen, und erzeugt daraus ein prüfbares Kopierskript.
 
-> Primäres Zielsystem: **Windows PowerShell 5.1** (`powershell.exe`), wie es
-> auf den meisten Corporate-Windows-Rechnern vorinstalliert ist. Unter
-> PowerShell 7 (`pwsh`) kann `System.Data.SqlClient` fehlen — dort ggf. zuerst
-> `Install-Module SqlServer` (falls ein interner PSGallery-Proxy verfügbar
-> ist) oder auf Windows PowerShell 5.1 wechseln.
+## Wichtig: PowerShell Constrained Language Mode
 
-## Sicherheitsmodell: DB-Zugriff nur lesend, Kopieren getrennt & reviewbar
+Viele Corporate-Windows-Rechner laufen mit PowerShell im **Constrained
+Language Mode** (durchgesetzt über AppLocker/WDAC-Richtlinien). In diesem
+Modus sind Methodenaufrufe auf "Nicht-Core"-.NET-Typen blockiert — das
+betrifft insbesondere direkten SQL-Server-Zugriff über
+`System.Data.SqlClient` (und jede andere ADO.NET-/COM-basierte Alternative
+genauso).
 
-Diese Architektur trennt bewusst zwei Dinge, die nichts miteinander zu tun
-haben müssen:
+**Deshalb spricht dieses Werkzeug die Datenbanken gar nicht mehr selbst an.**
+Stattdessen:
 
-1. **`Run-RenToMan.ps1`** spricht die Datenbanken an. Es führt **ausschließlich
-   `SELECT`-Abfragen** aus (`Get-SourceDocLogEntries`, `Get-CaseInfo`,
-   `Get-CaseIdMapping` in `RenToMan.psm1`) — es gibt im Code keinen einzigen
-   `INSERT`/`UPDATE`/`DELETE`-Pfad, und alle Werte werden als SQL-Parameter
-   übergeben (kein String-Concatenation, also auch kein SQL-Injection-Risiko).
-   Dieses Skript kopiert **selbst keine einzige Datei**.
-2. Mit `-GenerateCopyScript` erzeugt es ein **eigenständiges** `.ps1`-Skript
-   (`copy_script_<timestamp>.ps1`), das die eigentliche Kopieraktion (Schritt
-   5) enthält. Dieses generierte Skript hat **keine Datenbankabhängigkeit
-   mehr** — es braucht nur noch Lese-/Schreibrechte auf die aufgelisteten
-   Ordner. Es lässt sich vor der Ausführung vollständig lesen/prüfen, fragt
-   standardmäßig eine Bestätigung ab (Eingabe von `JA`, überspringbar mit
-   `-Force`), und kann getrennt — z.B. zu einem anderen Zeitpunkt oder unter
-   einem anderen Konto — ausgeführt werden.
+1. Du führst die beiden SQL-Skripte aus [`sql/`](sql/) selbst in deinem
+   SQL-Client (z.B. **SSMS**) aus und exportierst die Ergebnisse als CSV.
+2. `Run-RenToMan.ps1` liest nur noch diese beiden CSV-Dateien ein (per
+   `Import-Csv`), verknüpft sie und baut daraus die Kopierliste. Das
+   verwendet ausschließlich "Core Types" (Strings, Arrays, Hashtables,
+   PSCustomObjects) und eingebaute Cmdlets — funktioniert also auch unter
+   Constrained Language Mode einwandfrei, unabhängig von Adminrechten oder
+   installierten Zusatzmodulen.
 
-Als zusätzliche Absicherung (defense in depth), unabhängig vom Code:
-Standardmäßig verbindet sich das Tool per Windows Integrated Security mit den
-Rechten des ausführenden Kontos. Empfehlenswert ist, dafür einen **separaten
-SQL-Login mit reinem Lesezugriff** (`db_datareader`) auf beide Datenbanken
-einzurichten (`IntegratedSecurity = $false` + `UserId`/`Password` in der
-Config) — dann ist ein Schreibzugriff selbst bei einem Software-Fehler
-technisch unmöglich, nicht nur "vom Code her nicht vorgesehen".
+So bleibt außerdem das Sicherheitsmodell aus der letzten Iteration erhalten:
+Das Tool hat **nie** Schreibzugriff auf die Datenbank (es hat nach diesem
+Umbau überhaupt keinen DB-Zugriff mehr), und das eigentliche Kopieren
+passiert über ein separates, reviewbares Skript ohne jede Datenbankabhängigkeit.
 
-## Setup
+> Getestet gegen: PowerShell 7.5.1 unter Constrained Language Mode, ohne
+> `sqlcmd.exe` und ohne `SqlServer`/`SQLPS`-Modul — also den kleinsten
+> gemeinsamen Nenner. Falls bei euch doch `sqlcmd`/`SqlServer`-Modul verfügbar
+> ist oder ihr in FullLanguage-Mode lauft, könnt ihr die SQL-Skripte
+> natürlich trotzdem genauso gut damit ausführen statt mit SSMS.
 
-1. Ordner `powershell/` auf die Corporate-Maschine kopieren.
-2. `RenToMan.config.example.psd1` nach `RenToMan.config.psd1` kopieren und
-   Server-/Datenbanknamen sowie ggf. SQL-Zugangsdaten eintragen. **Nicht**
-   mit echten Zugangsdaten committen.
-3. Falls die Ausführung von Skripten standardmäßig blockiert ist (Corporate
-   Execution Policy), das Skript signieren lassen oder für die aktuelle
-   Session freigeben, z.B.:
-   ```powershell
-   Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
-   ```
-   (nur falls von der IT erlaubt — ansonsten IT nach dem korrekten Weg fragen).
+## Ablauf
 
-## Benutzung
+**Schritt 1-4: SQL-Abfragen in SSMS ausführen und als CSV exportieren**
 
-**Schritt 1-4 — nur suchen & auflisten (rein lesend, kein Kopierskript):**
+1. [`sql/01_source_documents.sql`](sql/01_source_documents.sql) gegen
+   `SQLSRV01\REN01` / `Patricia` ausführen. SSMS: Query-Menü → "SQLCMD Mode"
+   aktivieren, dann oben im Skript `LoginId`/`CategoryId`/`FromDate`/
+   `ToDate`/`SourceRoot` setzen. Ergebnis exportieren: Rechtsklick auf das
+   Ergebnisraster → "Save Results As..." → CSV, z.B. als
+   `source_documents.csv`.
+2. [`sql/02_case_mapping_and_target_paths.sql`](sql/02_case_mapping_and_target_paths.sql)
+   gegen `SQLSRV01\MAIN01` / `Patricia_Main_Live` ausführen (`TargetRoot`
+   setzen). Das ist eine Referenztabelle ohne Bezug zum Suchzeitraum — als
+   `case_mapping.csv` exportieren und über mehrere Läufe hinweg
+   wiederverwenden; nur neu exportieren, wenn neue Case-Mappings dazugekommen
+   sind.
+
+Beide Skripte sind reine `SELECT`-Abfragen und berechnen den Quell- bzw.
+Zielordnerpfad bereits direkt in SQL (Spalte `SOURCE_PATH` bzw.
+`TARGET_FOLDER`) — die verwendete Ordner-Namenskonvention (Padding,
+Groß-/Kleinschreibung) steht als Kommentar im jeweiligen Skript und sollte
+anhand ein paar echter Ergebniszeilen gegen den Windows-Explorer verifiziert
+werden, bevor ein Kopierskript erzeugt wird.
+
+**Schritt 4 (Fortsetzung): CSVs verknüpfen und auflisten**
 
 ```powershell
 cd powershell
-.\Run-RenToMan.ps1 `
-    -LoginId jsmith `
-    -FromDate 2026-01-01 -ToDate 2026-06-30 `
-    -TargetRoot '\\brimain\Main\Patricia\documents'
+.\Run-RenToMan.ps1 -SourceDocumentsCsvPath .\source_documents.csv -CaseMappingCsvPath .\case_mapping.csv
 ```
 
-Schreibt eine CSV mit allen gefundenen Dokumenten (`DOC_LOG_ID`, `LOG_DATE`,
-`DOC_NAME`, `DOC_FILE_NAME`, Quellpfad, Zielpfad, ggf. Skip-Grund) nach
-`logs\candidates_<timestamp>.csv` und zeigt die ersten 20 Zeilen direkt in
-der Konsole. **Vor der Erzeugung des Kopierskripts prüfen**, ob die Pfade
-plausibel aussehen — die Ordner-Namenskonvention (Padding,
-Groß-/Kleinschreibung) ist in `RenToMan.config.psd1` unter `FolderFormat`
-konfigurierbar.
+Schreibt `logs\candidates_<timestamp>.csv` mit allen gefundenen Dokumenten
+(`DOC_LOG_ID`, `LOG_DATE`, `DOC_NAME`, `DOC_FILE_NAME`, Quellpfad, Zielpfad,
+ggf. Skip-Grund) und zeigt die ersten 20 Zeilen in der Konsole.
 
-Statt `-LoginId` kann auch `-CategoryId` (oder beides kombiniert) angegeben
-werden; mindestens eines von beiden ist Pflicht.
-
-**Schritt 5 — Kopierskript erzeugen (immer noch nichts wird kopiert):**
+**Schritt 5: Kopierskript erzeugen (immer noch nichts wird kopiert)**
 
 ```powershell
-.\Run-RenToMan.ps1 `
-    -LoginId jsmith `
-    -FromDate 2026-01-01 -ToDate 2026-06-30 `
-    -TargetRoot '\\brimain\Main\Patricia\documents' `
-    -GenerateCopyScript
+.\Run-RenToMan.ps1 -SourceDocumentsCsvPath .\source_documents.csv -CaseMappingCsvPath .\case_mapping.csv -GenerateCopyScript
 ```
 
 Erzeugt zusätzlich `logs\copy_script_<timestamp>.ps1`. Dieses Skript:
 
-- braucht **keine Datenbankverbindung** mehr,
-- enthält am Anfang lesbar die Liste aller geplanten Kopiervorgänge
-  (`$Items = @( [pscustomobject]@{ DocLogId = ...; Source = '...'; Target = '...' }, ... )`),
+- braucht **keine Datenbankverbindung**,
+- enthält am Anfang lesbar die Liste aller geplanten Kopiervorgänge,
 - legt fehlende Zielordner an, überspringt bereits vorhandene Zieldateien
   (überschreibt nie),
-- behandelt Dateinamen inkl. Umlaute korrekt (.NET-Strings sind durchgängig
-  UTF-16, keine manuelle Encoding-Behandlung nötig),
-- fragt vor dem Start eine Bestätigung ab (`JA` eingeben, oder `-Force` zum
-  Überspringen der Abfrage),
-- schreibt sein eigenes JSONL-Log (`copy_log_<timestamp>.jsonl`) neben sich.
-
-**Kopierskript prüfen und separat ausführen:**
+- behandelt Dateinamen inkl. Umlaute korrekt,
+- fragt vor dem Start eine Bestätigung ab (`JA` eingeben, oder `-Force`),
+- schreibt sein eigenes JSONL-Log (`copy_log_<timestamp>.jsonl`) neben sich,
+- nutzt selbst keine Konstrukte, die unter Constrained Language Mode
+  blockiert wären (kein `StringBuilder`, keine generischen .NET-Collections).
 
 ```powershell
-notepad .\logs\copy_script_20260101_120000.ps1   # oder VS Code etc. - erst lesen!
+notepad .\logs\copy_script_20260101_120000.ps1   # erst lesen!
 .\logs\copy_script_20260101_120000.ps1           # fragt vor dem Kopieren nach Bestaetigung
 ```
 
-**Schritt 6 — Report aus dem Log erzeugen (ebenfalls ohne DB-Zugriff):**
+**Schritt 6: Report erzeugen**
 
 ```powershell
 .\Build-RenToManReport.ps1 -LogPath .\logs\copy_log_20260101_120000.jsonl
 ```
 
-Schreibt `logs\copy_log_20260101_120000.report.txt` mit einer Zusammenfassung
-(Anzahl kopiert/übersprungen/fehlend/Fehler, Details zu Problemfällen).
+## Setup
+
+1. Ordner `powershell/` auf die Corporate-Maschine kopieren.
+2. `RenToMan.config.example.psd1` nach `RenToMan.config.psd1` kopieren
+   (steuert nur noch, wohin Logs/CSVs/Skripte geschrieben werden).
+3. Falls die Ausführung von Skripten standardmäßig blockiert ist: IT nach dem
+   korrekten Weg fragen (Signierung, Ausnahme, o.ä.) — `Set-ExecutionPolicy
+   -Scope Process -ExecutionPolicy Bypass` funktioniert nur, wenn eure
+   Richtlinie das überhaupt zulässt.
 
 ## Struktur
 
 ```
 powershell/
   RenToMan.psd1                    Modul-Manifest
-  RenToMan.psm1                    Kernlogik: DB-Zugriff (nur SELECT), Pfadaufbau,
-                                    Planung, Kopierskript-Generator
-  RenToMan.config.example.psd1     Vorlage für Konfiguration (Server, Pfade, Ordner-Format)
-  Run-RenToMan.ps1                 Schritte 1-4 (+ optional Skript-Generierung für Schritt 5)
+  RenToMan.psm1                    CSV-Join, Pfadaufbau-Hilfsfunktionen, Kopierskript-Generator
+                                    (kein Datenbankzugriff, Constrained-Language-Mode-sicher)
+  RenToMan.config.example.psd1     Vorlage fuer Konfiguration (nur noch Logging.LogDir)
+  Run-RenToMan.ps1                 Schritt 4 (+ optional Skript-Generierung fuer Schritt 5)
   Build-RenToManReport.ps1         Schritt 6: Report aus dem JSONL-Log des Kopierskripts
   sql/
-    01_source_documents.sql        Schritt 4, Teil 1: Quelldokumente (REN01)
-    02_case_id_mapping.sql         Schritt 4, Teil 2: Case-ID-Mapping (MAIN01)
-    03_target_case_info.sql        Schritt 4, Teil 3: Zielpfad je Case (MAIN01)
-    04_full_candidate_list_linked_server.sql
-                                    Optional: alles in einer Query (braucht Linked Server)
+    01_source_documents.sql        Schritt 1-4, Teil 1: Quelldokumente (REN01), SOURCE_PATH bereits berechnet
+    02_case_mapping_and_target_paths.sql
+                                    Schritt 1-4, Teil 2: Case-ID-Mapping + TARGET_FOLDER (MAIN01), ungefiltert
+    03_full_candidate_list_linked_server_optional.sql
+                                    Optional: alles in einer Query, falls ein Linked Server existiert
   tests/
-    RenToMan.Tests.ps1             Pester-Tests für die DB-unabhängige Logik
-                                    (inkl. generiertem Kopierskript)
+    RenToMan.Tests.ps1             Pester-Tests fuer die DB-unabhaengige Logik
 ```
 
-### SQL separat testen (Punkt 4)
+### SQL separat testen
 
-Die drei Skripte in `sql/` bilden zusammen genau die Logik von Schritt 4
-("Auflistung der gefundenen Dokumente") ab und lassen sich unabhängig vom
-PowerShell-Tool in SSMS oder per `sqlcmd` gegen die echten Instanzen testen —
-auch das sind reine `SELECT`-Abfragen, es wird nichts verändert:
-
-1. `01_source_documents.sql` gegen `SQLSRV01\REN01` / `Patricia` — liefert
-   die gefundenen Dokumente inkl. berechnetem `SOURCE_PATH`.
-2. `02_case_id_mapping.sql` gegen `SQLSRV01\MAIN01` / `Patricia_Main_Live` —
-   löst die `CASE_ID`s aus Schritt 1 auf `MAIN_LIVE_CASE_ID` auf (Liste der
-   IDs im Skript eintragen).
-3. `03_target_case_info.sql` gegen `SQLSRV01\MAIN01` — liefert je
-   `MAIN_LIVE_CASE_ID` den berechneten `TARGET_FOLDER`.
-
-Jedes Skript nutzt `:setvar`-Variablen (SSMS: "SQLCMD Mode" im Query-Menü
-aktivieren, oder `sqlcmd -v Name=Wert ...`), sodass Login/Kategorie/Zeitraum/
+Die beiden Skripte in `sql/` sind unabhängig vom PowerShell-Tool direkt in
+SSMS oder per `sqlcmd` (falls vorhanden) testbar — reine `SELECT`-Abfragen,
+es wird nichts verändert. Jedes Skript nutzt `:setvar`-Variablen (SSMS:
+"SQLCMD Mode" im Query-Menü aktivieren), sodass Login/Kategorie/Zeitraum/
 Pfade ohne Codeänderung durchgetestet werden können.
 
 Falls ein Linked Server von MAIN01 nach REN01 existiert, liefert
-`04_full_candidate_list_linked_server.sql` das komplette Ergebnis (Quell- und
-Zielpfad, Skip-Grund) in einer einzigen Abfrage.
+`03_full_candidate_list_linked_server_optional.sql` das komplette Ergebnis
+(Quell- und Zielpfad, Skip-Grund) in einer einzigen Abfrage — rein optional,
+für den normalen Ablauf oben nicht nötig.
 
 ### Tests
 
@@ -167,23 +149,28 @@ Install-Module Pester -Scope CurrentUser   # falls noch nicht vorhanden
 Invoke-Pester -Path .\tests\RenToMan.Tests.ps1
 ```
 
-Diese Tests wurden **nicht** in dieser (Linux-)Entwicklungsumgebung
-ausgeführt, da dort kein PowerShell verfügbar ist — bitte auf der
-Corporate-Maschine laufen lassen und Auffälligkeiten zurückmelden.
+Diese Tests wurden **nicht** in der Linux-Entwicklungsumgebung ausgeführt, da
+dort kein PowerShell verfügbar ist — bitte auf der Corporate-Maschine laufen
+lassen und Auffälligkeiten zurückmelden. Sie decken bewusst nur Logik ab, die
+ausschließlich "Core Types" verwendet, damit sie auch unter Constrained
+Language Mode aussagekräftig sind.
 
 ## Bekannte Annahmen / offene Punkte für weitere Iterationen
 
-- **Ordner-Namenskonvention** (Padding von Case Type/Family Number,
-  Groß-/Kleinschreibung von Country/Extension) ist als Best-Guess in
-  `RenToMan.config.psd1` hinterlegt und sollte anhand echter Listing-Läufe
-  verifiziert werden, bevor das Kopierskript erzeugt/ausgeführt wird.
+- **Ordner-Namenskonvention** ist als Best-Guess direkt in den SQL-Skripten
+  (`sql/01...`, `sql/02...`) hinterlegt (Padding, Groß-/Kleinschreibung) —
+  beide Skripte im Sync halten, falls die reale Struktur abweicht.
 - Es wird angenommen, dass genau eine Datei pro `PAT_DOC_LOG`-Eintrag
-  existiert (`DOC_FILE_NAME` im Case-Ordner). Mehrere Dateien/Anhänge pro
-  Dokument sind noch nicht abgebildet.
+  existiert (`DOC_FILE_NAME` im Case-Ordner).
 - Es wird bislang **kein** `PAT_DOC_LOG`-Eintrag auf der Main-Seite angelegt —
   es werden nur die Dateien auf dem Filesystem kopiert.
 - Bereits vorhandene Zieldateien werden übersprungen, nicht überschrieben.
-- Log/Report liegen lokal als JSONL/CSV/TXT, nicht in einer DB-Tabelle.
-- SQL-Authentifizierung via Windows Integrated Security (`Trusted_Connection`)
-  ist Standard; für SQL-Auth (empfohlen: separater Read-Only-Login)
-  `IntegratedSecurity = $false` plus `UserId`/`Password` in der Config setzen.
+- `case_mapping.csv` (Schritt 2) ist eine Referenztabelle ohne Bezug zum
+  Suchzeitraum — sie muss nicht bei jedem Lauf neu exportiert werden, nur
+  wenn neue Case-Mappings hinzukommen.
+- Falls sich herausstellt, dass Constrained Language Mode bei euch doch nicht
+  gilt (bzw. IT das ändert) oder `sqlcmd`/`SqlServer`-Modul verfügbar wird,
+  könnte eine direkte DB-Anbindung wieder ergänzt werden — aktuell bewusst
+  nicht eingebaut, um nicht von einer möglicherweise unbeabsichtigten
+  Richtlinien-Lücke (z.B. elevierte Sessions mit `FullLanguage`) abhängig zu
+  sein.

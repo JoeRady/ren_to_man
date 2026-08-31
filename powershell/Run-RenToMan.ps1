@@ -1,50 +1,40 @@
 <#
 .SYNOPSIS
-    Finds Patricia documents to copy from the Renewals instance to the Main
-    instance and generates a reviewable copy script for them.
+    Joins the two CSV exports from powershell/sql/ into a candidate document
+    list and (optionally) generates a reviewable copy script for them.
 
 .DESCRIPTION
-    Implements steps 1-4 and prepares step 5-6:
-      1. Filter by -LoginId and/or -CategoryId (at least one required)
-      2. Date range -FromDate / -ToDate
-      3. -TargetRoot for the destination document store
-      4. Lists the found documents (source path, DOC_LOG_ID, LOG_DATE, DOC_NAME,
-         DOC_FILE_NAME, target path) to a CSV - this always happens and is a
-         pure read-only query (only SELECT statements against the database)
+    This tool does NOT connect to SQL Server itself. Many corporate Windows
+    machines run PowerShell under Constrained Language Mode (enforced by
+    AppLocker/WDAC), which blocks the .NET types needed for direct SQL
+    Server access (System.Data.SqlClient etc.) - so instead:
 
-    This script never touches the filesystem beyond writing its own CSV/log
-    output, and never issues anything but SELECT statements against SQL
-    Server. It does NOT copy any documents itself.
+      1+2+3. Run powershell/sql/01_source_documents.sql (with your
+             LoginId/CategoryId/FromDate/ToDate/SourceRoot :setvar values)
+             against SQLSRV01\REN01 in SSMS (or another SQL client) and
+             export the result grid as CSV.
+             Run powershell/sql/02_case_mapping_and_target_paths.sql (with
+             your TargetRoot :setvar value) against SQLSRV01\MAIN01 and
+             export that result grid as CSV too (this one does not depend on
+             the search filters and can be reused across runs).
+      4.     This script (Run-RenToMan.ps1) joins those two CSVs, lists the
+             resulting candidates (source path, DOC_LOG_ID, LOG_DATE,
+             DOC_NAME, DOC_FILE_NAME, target path) to a new CSV.
+      5.     With -GenerateCopyScript: generates a second, standalone .ps1
+             file that does the actual copying. That script has NO database
+             dependency and needs only filesystem access, so it can be
+             reviewed before running, and prompts for confirmation.
+      6.     After the copy script has run, use .\Build-RenToManReport.ps1
+             to build the report from its log.
 
-    Instead, with -GenerateCopyScript it produces a second, standalone .ps1
-    file that does the actual copying (step 5). That generated script has NO
-    database dependency at all - it only needs filesystem read/write access
-    to the paths it lists - so you (or whoever runs it) can open and review
-    it first, and run it separately, possibly at a different time or under a
-    different account. It prompts for confirmation before copying anything
-    unless run with -Force, and writes its own JSONL log.
+    This script itself never touches the filesystem beyond writing its own
+    CSV/script output, and never connects to any database.
 
-    For step 6 (report), run .\Build-RenToManReport.ps1 -LogPath <that log>
-    after the copy script has run.
+.PARAMETER SourceDocumentsCsvPath
+    CSV exported from powershell/sql/01_source_documents.sql.
 
-.PARAMETER LoginId
-    Filter PAT_DOC_LOG.LOGIN_ID. Combine with -CategoryId or use alone.
-
-.PARAMETER CategoryId
-    Filter PAT_DOC_LOG.CATEGORY_ID. Combine with -LoginId or use alone.
-
-.PARAMETER FromDate
-    Start of the date range (inclusive), e.g. '2026-01-01'.
-
-.PARAMETER ToDate
-    End of the date range (inclusive), e.g. '2026-06-30'.
-
-.PARAMETER TargetRoot
-    Root folder of the target (Main) document store, e.g. a UNC path.
-    Must be given on every run.
-
-.PARAMETER SourceRoot
-    Overrides Paths.SourceRoot from the config file for this run.
+.PARAMETER CaseMappingCsvPath
+    CSV exported from powershell/sql/02_case_mapping_and_target_paths.sql.
 
 .PARAMETER ConfigPath
     Path to the config data file (default: .\RenToMan.config.psd1 next to
@@ -52,37 +42,21 @@
 
 .PARAMETER GenerateCopyScript
     Generate the standalone copy script (step 5) alongside the candidate CSV.
-    Without this switch, the run only lists candidates (step 4) - nothing is
-    prepared for copying yet.
+    Without this switch, the run only lists candidates (step 4).
 
 .PARAMETER OutDir
     Directory to write the candidate CSV / generated copy script into
     (default: Logging.LogDir from the config file).
 
 .EXAMPLE
-    # Steps 1-4 only: list candidates, review the CSV
-    .\Run-RenToMan.ps1 -LoginId jsmith -FromDate 2026-01-01 -ToDate 2026-06-30 `
-        -TargetRoot '\\brimain\Main\Patricia\documents'
-
-.EXAMPLE
-    # Steps 1-4 + generate the copy script for step 5
-    .\Run-RenToMan.ps1 -LoginId jsmith -FromDate 2026-01-01 -ToDate 2026-06-30 `
-        -TargetRoot '\\brimain\Main\Patricia\documents' -GenerateCopyScript
-    # ... review logs\copy_script_<timestamp>.ps1, then run it separately:
-    .\logs\copy_script_<timestamp>.ps1
-    # ... then build the report (step 6):
-    .\Build-RenToManReport.ps1 -LogPath .\logs\copy_log_<timestamp>.jsonl
+    .\Run-RenToMan.ps1 -SourceDocumentsCsvPath .\source_documents.csv `
+        -CaseMappingCsvPath .\case_mapping.csv -GenerateCopyScript
 #>
 [CmdletBinding()]
 param(
-    [string] $LoginId,
-    [Nullable[int]] $CategoryId,
+    [Parameter(Mandatory)][string] $SourceDocumentsCsvPath,
+    [Parameter(Mandatory)][string] $CaseMappingCsvPath,
 
-    [Parameter(Mandatory)][datetime] $FromDate,
-    [Parameter(Mandatory)][datetime] $ToDate,
-    [Parameter(Mandatory)][string] $TargetRoot,
-
-    [string] $SourceRoot,
     [string] $ConfigPath = (Join-Path $PSScriptRoot 'RenToMan.config.psd1'),
     [switch] $GenerateCopyScript,
     [string] $OutDir
@@ -90,48 +64,18 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-if (-not $LoginId -and -not $PSBoundParameters.ContainsKey('CategoryId')) {
-    throw 'Provide at least one of -LoginId / -CategoryId.'
-}
-
 Import-Module (Join-Path $PSScriptRoot 'RenToMan.psd1') -Force
 
 Write-Host 'Loading config...'
 $cfg = Import-RenToManConfig -Path $ConfigPath
 
-$effectiveSourceRoot = if ($SourceRoot) { $SourceRoot } else { $cfg.Paths.SourceRoot }
 $logDir = if ($OutDir) { $OutDir } else { $cfg.Logging.LogDir }
 if (-not (Test-Path -LiteralPath $logDir)) { New-Item -ItemType Directory -Path $logDir -Force | Out-Null }
 $runStamp = Get-Date -Format 'yyyyMMdd_HHmmss'
 
-Write-Host 'Connecting to source instance (Renewals) and querying PAT_DOC_LOG (read-only: SELECT only)...'
-$renConn = New-RenToManSqlConnection -DbConfig $cfg.Databases.Renewals
-try {
-    $entries = Get-SourceDocLogEntries -Connection $renConn -LoginId $LoginId -CategoryId $CategoryId -FromDate $FromDate -ToDate $ToDate
-    Write-Host "  found $($entries.Count) document(s)"
-
-    $sourceCaseIds = @($entries | ForEach-Object { [int]$_.CASE_ID } | Sort-Object -Unique)
-    Write-Host 'Querying source case data (PAT_CASE)...'
-    $sourceCases = Get-CaseInfo -Connection $renConn -CaseIds $sourceCaseIds
-}
-finally {
-    $renConn.Close()
-}
-
-Write-Host 'Connecting to target instance (Main): case-id mapping + target case data (read-only: SELECT only)...'
-$mainConn = New-RenToManSqlConnection -DbConfig $cfg.Databases.Main
-try {
-    $caseIdMap = Get-CaseIdMapping -Connection $mainConn -RenewalsCaseIds $sourceCaseIds
-    $mainCaseIds = @($caseIdMap.Values | Sort-Object -Unique)
-    $targetCases = Get-CaseInfo -Connection $mainConn -CaseIds $mainCaseIds
-}
-finally {
-    $mainConn.Close()
-}
-
-$plan = New-RenToManPlan -Entries $entries -SourceCases $sourceCases -CaseIdMap $caseIdMap `
-    -TargetCases $targetCases -SourceRoot $effectiveSourceRoot -TargetRoot $TargetRoot `
-    -FolderFormat $cfg.FolderFormat
+Write-Host "Joining $SourceDocumentsCsvPath and $CaseMappingCsvPath ..."
+$plan = New-RenToManPlanFromCsv -SourceDocumentsCsvPath $SourceDocumentsCsvPath -CaseMappingCsvPath $CaseMappingCsvPath
+Write-Host "  $($plan.Count) document(s) in the source CSV"
 
 $planCsv = Join-Path $logDir "candidates_$runStamp.csv"
 Write-RenToManCandidateCsv -Plan $plan -Path $planCsv
@@ -154,7 +98,7 @@ if ($plan.Count -gt 20) {
 
 if (-not $GenerateCopyScript) {
     Write-Host ''
-    Write-Host 'Nur Auflistung (Schritt 1-4) - es wurde nichts kopiert und kein Kopierskript erzeugt.'
+    Write-Host 'Nur Auflistung (Schritt 4) - es wurde kein Kopierskript erzeugt.'
     Write-Host 'Erneut mit -GenerateCopyScript aufrufen, um das (DB-unabhaengige) Kopierskript zu erzeugen.'
     return
 }
@@ -166,7 +110,6 @@ Write-Host ''
 Write-Host "Kopierskript erzeugt: $($genResult.Path)"
 Write-Host "  enthaltene Kopiervorgaenge: $($genResult.ItemCount)"
 Write-Host ''
-Write-Host 'Dieses Werkzeug hat NICHTS kopiert und benoetigt ab hier keine Datenbankverbindung mehr.'
 Write-Host 'Naechste Schritte:'
 Write-Host "  1. Skript inhaltlich pruefen: $copyScriptPath"
 Write-Host "  2. Separat ausfuehren: $copyScriptPath"

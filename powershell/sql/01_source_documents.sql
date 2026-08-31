@@ -1,5 +1,5 @@
 /*
-    Step 4 (part 1/3): find candidate documents on the SOURCE (Renewals) instance.
+    Step 4 (part 1/2): find candidate documents on the SOURCE (Renewals) instance.
 
     Run this against:  SQLSRV01\REN01 , database Patricia
 
