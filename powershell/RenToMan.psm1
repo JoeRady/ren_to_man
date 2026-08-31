@@ -81,45 +81,31 @@ function New-RenToManPlanFromCsv {
         $mapRow = $mappingByCaseId[$caseId]
 
         if (-not $mapRow) {
-            [pscustomobject]@{
-                DocLogId    = $e.DOC_LOG_ID
-                CaseId      = $e.CASE_ID
-                MainCaseId  = $null
-                LogDate     = $e.LOG_DATE
-                DocName     = $e.DOC_NAME
-                DocFileName = $e.DOC_FILE_NAME
-                SourcePath  = $e.SOURCE_PATH
-                TargetPath  = $null
-                SkipReason  = 'no mapping in wr_Renewals_vs_Main_Live (case_mapping.csv)'
-            }
-            continue
+            $mainCaseId = $null
+            $targetPath = $null
+            $skipReason = 'no mapping in wr_Renewals_vs_Main_Live (case_mapping.csv)'
         }
-
-        if (-not $e.DOC_FILE_NAME) {
-            [pscustomobject]@{
-                DocLogId    = $e.DOC_LOG_ID
-                CaseId      = $e.CASE_ID
-                MainCaseId  = $mapRow.MAIN_LIVE_CASE_ID
-                LogDate     = $e.LOG_DATE
-                DocName     = $e.DOC_NAME
-                DocFileName = $e.DOC_FILE_NAME
-                SourcePath  = $e.SOURCE_PATH
-                TargetPath  = $null
-                SkipReason  = 'DOC_FILE_NAME is empty'
-            }
-            continue
+        elseif (-not $e.DOC_FILE_NAME) {
+            $mainCaseId = $mapRow.MAIN_LIVE_CASE_ID
+            $targetPath = $null
+            $skipReason = 'DOC_FILE_NAME is empty'
+        }
+        else {
+            $mainCaseId = $mapRow.MAIN_LIVE_CASE_ID
+            $targetPath = Join-Path $mapRow.TARGET_FOLDER $e.DOC_FILE_NAME
+            $skipReason = $null
         }
 
         [pscustomobject]@{
             DocLogId    = $e.DOC_LOG_ID
             CaseId      = $e.CASE_ID
-            MainCaseId  = $mapRow.MAIN_LIVE_CASE_ID
+            MainCaseId  = $mainCaseId
             LogDate     = $e.LOG_DATE
             DocName     = $e.DOC_NAME
             DocFileName = $e.DOC_FILE_NAME
             SourcePath  = $e.SOURCE_PATH
-            TargetPath  = Join-Path $mapRow.TARGET_FOLDER $e.DOC_FILE_NAME
-            SkipReason  = $null
+            TargetPath  = $targetPath
+            SkipReason  = $skipReason
         }
     }
 
