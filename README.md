@@ -1,10 +1,18 @@
 # ren_to_man
 
-Kopiert Patricia-Dokumente aus der **Renewals**-Instanz in die **Main**-Instanz:
-liest `PAT_DOC_LOG` / `PAT_CASE` auf der Quellseite, mappt die `CASE_ID` über
-`wr_Renewals_vs_Main_Live` auf die Ziel-`CASE_ID`, baut Quell- und Zielpfad
-anhand der vierstufigen Ordnerstruktur (`Case Type / Family Number / Country /
-Case Number Extension`) und kopiert die Dateien.
+Findet Patricia-Dokumente, die von der **Renewals**- in die **Main**-Instanz
+kopiert werden sollen: liest `PAT_DOC_LOG` / `PAT_CASE` auf der Quellseite,
+mappt die `CASE_ID` über `wr_Renewals_vs_Main_Live` auf die Ziel-`CASE_ID`,
+baut Quell- und Zielpfad anhand der vierstufigen Ordnerstruktur (`Case Type /
+Family Number / Country / Case Number Extension`).
+
+**Sicherheitsmodell:** Der Teil, der die Datenbanken anspricht, führt
+ausschließlich `SELECT`-Abfragen aus — es gibt im Code keinen einzigen
+schreibenden SQL-Pfad. Das eigentliche Kopieren (Schritt 5) passiert nicht
+direkt durch dieses Tool, sondern durch ein separat generiertes,
+eigenständiges Skript ohne jede Datenbankabhängigkeit, das vor der Ausführung
+vollständig geprüft werden kann. Details dazu in der jeweiligen
+Varianten-README.
 
 ## Varianten
 
@@ -30,10 +38,14 @@ PowerShell oder Python auszuführen.
 2. Zeitraum von...bis
 3. Zielpfad (Root der Main-Ordnerstruktur)
 4. Auflistung der gefundenen Dokumente (Quellpfad, `DOC_LOG_ID`, `LOG_DATE`,
-   `DOC_NAME`, `DOC_FILE_NAME`, Zielpfad) als CSV — Standard ist ein reiner
-   Dry Run, es wird noch nichts kopiert
-5. Kopieren (nur mit explizitem `-Execute` / `--execute`): legt Zielordner
-   an, behandelt Dateinamen mit Umlauten korrekt (UTF-8/Unicode)
+   `DOC_NAME`, `DOC_FILE_NAME`, Zielpfad) als CSV — rein lesend, es wird noch
+   nichts kopiert und kein DB-Schreibzugriff verwendet
+5. Kopieren: **PowerShell-Variante (empfohlen)** erzeugt mit
+   `-GenerateCopyScript` ein eigenständiges, DB-unabhängiges Kopierskript zum
+   Prüfen vor der Ausführung (siehe [`powershell/README.md`](powershell/README.md#sicherheitsmodell-db-zugriff-nur-lesend-kopieren-getrennt--reviewbar));
+   die **Python-Variante** kopiert mit `--execute` direkt. Beide legen
+   Zielordner an und behandeln Dateinamen mit Umlauten korrekt
+   (UTF-8/Unicode).
 6. Log (JSONL) + menschenlesbarer Report je Lauf
 
 ## Bekannte Annahmen / offene Punkte für weitere Iterationen

@@ -162,3 +162,75 @@ Describe 'Copy-RenToManDocument' {
         $result.Message | Should -Be 'no mapping'
     }
 }
+
+Describe 'ConvertTo-RenToManPsStringLiteral' {
+    It 'escapes single quotes so the value round-trips through Invoke-Expression' {
+        $literal = ConvertTo-RenToManPsStringLiteral "O'Brien ümlaut ' pdf"
+        $value = Invoke-Expression $literal
+        $value | Should -Be "O'Brien ümlaut ' pdf"
+    }
+
+    It 'renders $null for a null value' {
+        ConvertTo-RenToManPsStringLiteral $null | Should -Be '$null'
+    }
+}
+
+Describe 'New-RenToManCopyScript' {
+    BeforeEach {
+        $script:tmpRoot = Join-Path ([System.IO.Path]::GetTempPath()) ([Guid]::NewGuid())
+        New-Item -ItemType Directory -Path $tmpRoot | Out-Null
+    }
+    AfterEach {
+        Remove-Item -LiteralPath $tmpRoot -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
+    It 'generates a self-contained script that actually copies a file when run with -Force' {
+        $srcDir = Join-Path $tmpRoot 'src'
+        New-Item -ItemType Directory -Path $srcDir | Out-Null
+        $srcFile = Join-Path $srcDir "ümlaut ' file.pdf"
+        Set-Content -LiteralPath $srcFile -Value 'hello' -Encoding UTF8
+
+        $dstFile = Join-Path $tmpRoot "dst\2\666777\DE\EP\ümlaut ' file.pdf"
+
+        $plan = @([pscustomobject]@{
+            DocLogId = 1; CaseId = 100; MainCaseId = 200; LogDate = $null
+            DocName = 'Doc'; DocFileName = "ümlaut ' file.pdf"
+            SourcePath = $srcFile; TargetPath = $dstFile; SkipReason = $null
+        })
+
+        $scriptPath = Join-Path $tmpRoot 'copy_script.ps1'
+        $genResult = New-RenToManCopyScript -Plan $plan -Path $scriptPath
+
+        $genResult.ItemCount | Should -Be 1
+        Test-Path -LiteralPath $scriptPath | Should -Be $true
+
+        # The generated script must not reference the module or any DB type.
+        $content = Get-Content -LiteralPath $scriptPath -Raw
+        $content | Should -Not -Match 'SqlConnection'
+        $content | Should -Not -Match 'Import-Module'
+
+        & $scriptPath -Force
+
+        Test-Path -LiteralPath $dstFile | Should -Be $true
+        (Get-Content -LiteralPath $dstFile -Raw) | Should -Be 'hello'
+
+        $logFile = Get-ChildItem -Path $tmpRoot -Filter 'copy_log_*.jsonl' | Select-Object -First 1
+        $logFile | Should -Not -BeNullOrEmpty
+        $logRecord = Get-Content -LiteralPath $logFile.FullName -Raw | ConvertFrom-Json
+        $logRecord.status | Should -Be 'copied'
+    }
+
+    It 'excludes non-copyable (skipped) plan entries from the generated script' {
+        $plan = @([pscustomobject]@{
+            DocLogId = 1; CaseId = 100; MainCaseId = $null; LogDate = $null
+            DocName = 'Doc'; DocFileName = 'f.pdf'
+            SourcePath = $null; TargetPath = $null; SkipReason = 'no mapping'
+        })
+
+        $scriptPath = Join-Path $tmpRoot 'copy_script.ps1'
+        $genResult = New-RenToManCopyScript -Plan $plan -Path $scriptPath
+
+        $genResult.ItemCount | Should -Be 0
+        $genResult.SkippedAtPlanning | Should -Be 1
+    }
+}
