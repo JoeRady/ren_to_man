@@ -112,7 +112,7 @@ Describe 'New-RenToManCopyScript' {
         $srcDir = Join-Path $tmpRoot 'src'
         New-Item -ItemType Directory -Path $srcDir | Out-Null
         $srcFile = Join-Path $srcDir "ümlaut ' file.pdf"
-        Set-Content -LiteralPath $srcFile -Value 'hello' -Encoding UTF8
+        Set-Content -LiteralPath $srcFile -Value 'hello' -Encoding UTF8 -NoNewline
 
         $dstFile = Join-Path $tmpRoot "dst\2\666777\DE\EP\ümlaut ' file.pdf"
 

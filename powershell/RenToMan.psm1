@@ -149,9 +149,10 @@ function ConvertTo-RenToManPsStringLiteral {
        Uses only the -replace operator and string concatenation (+), both
        fine under Constrained Language Mode. #>
     [CmdletBinding()]
-    param([AllowNull()][string] $Value)
+    param([AllowNull()] $Value)
     if ($null -eq $Value) { return '$null' }
-    return "'" + ($Value -replace "'", "''") + "'"
+    $text = [string]$Value
+    return "'" + ($text -replace "'", "''") + "'"
 }
 
 function New-RenToManCopyScript {
