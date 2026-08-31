@@ -67,14 +67,7 @@ Describe 'New-RenToManPlanFromCsv' {
             }
         ) | Export-Csv -Path $mappingCsv -NoTypeInformation -Encoding UTF8
 
-        Write-Host "DEBUG tmpRoot=$tmpRoot"
-        Write-Host "DEBUG sourceCsv exists=$(Test-Path -LiteralPath $sourceCsv) content:"
-        Get-Content -LiteralPath $sourceCsv | Write-Host
-        Write-Host "DEBUG mappingCsv exists=$(Test-Path -LiteralPath $mappingCsv) content:"
-        Get-Content -LiteralPath $mappingCsv | Write-Host
-
-        $plan = New-RenToManPlanFromCsv -SourceDocumentsCsvPath $sourceCsv -CaseMappingCsvPath $mappingCsv
-        Write-Host "DEBUG plan type=$($plan.GetType().FullName) count=$($plan.Count) plan=$($plan | Out-String)"
+        $plan = @(New-RenToManPlanFromCsv -SourceDocumentsCsvPath $sourceCsv -CaseMappingCsvPath $mappingCsv)
 
         $plan.Count | Should -Be 1
         Test-RenToManCopyable $plan[0] | Should -Be $true
@@ -98,7 +91,7 @@ Describe 'New-RenToManPlanFromCsv' {
         # Import-Csv needs a header row even for zero data rows.
         Set-Content -Path $mappingCsv -Value '"RENEWALS_CASE_ID","MAIN_LIVE_CASE_ID","TARGET_FOLDER"' -Encoding UTF8
 
-        $plan = New-RenToManPlanFromCsv -SourceDocumentsCsvPath $sourceCsv -CaseMappingCsvPath $mappingCsv
+        $plan = @(New-RenToManPlanFromCsv -SourceDocumentsCsvPath $sourceCsv -CaseMappingCsvPath $mappingCsv)
 
         $plan.Count | Should -Be 1
         Test-RenToManCopyable $plan[0] | Should -Be $false

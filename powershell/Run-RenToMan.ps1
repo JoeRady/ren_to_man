@@ -74,7 +74,7 @@ if (-not (Test-Path -LiteralPath $logDir)) { New-Item -ItemType Directory -Path 
 $runStamp = Get-Date -Format 'yyyyMMdd_HHmmss'
 
 Write-Host "Joining $SourceDocumentsCsvPath and $CaseMappingCsvPath ..."
-$plan = New-RenToManPlanFromCsv -SourceDocumentsCsvPath $SourceDocumentsCsvPath -CaseMappingCsvPath $CaseMappingCsvPath
+$plan = @(New-RenToManPlanFromCsv -SourceDocumentsCsvPath $SourceDocumentsCsvPath -CaseMappingCsvPath $CaseMappingCsvPath)
 Write-Host "  $($plan.Count) document(s) in the source CSV"
 
 $planCsv = Join-Path $logDir "candidates_$runStamp.csv"

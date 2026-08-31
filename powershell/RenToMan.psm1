@@ -109,7 +109,11 @@ function New-RenToManPlanFromCsv {
         }
     }
 
-    return @($plan)
+    # -NoEnumerate is required here: without it, PowerShell streams the
+    # array's elements individually through the pipeline, and if there is
+    # exactly one element, the caller's variable ends up holding that single
+    # object instead of a 1-element array (breaking .Count / [0] access).
+    Write-Output -NoEnumerate @($plan)
 }
 
 function Get-LongPath {
