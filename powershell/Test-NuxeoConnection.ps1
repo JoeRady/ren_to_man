@@ -118,6 +118,26 @@ catch {
 }
 
 Write-Host ''
+Write-Host "Baseline reachability check: $BaseUrl (no auth, no specific API route) ..."
+$baseParams = @{ Uri = $BaseUrl; Method = 'Get'; ErrorAction = 'Stop'; UseBasicParsing = $true }
+if ($SkipCertificateCheck) { $baseParams.SkipCertificateCheck = $true }
+try {
+    $baseResp = Invoke-WebRequest @baseParams
+    Write-Host "  Reachable - HTTP $($baseResp.StatusCode)." -ForegroundColor Green
+}
+catch {
+    $baseStatus = $null
+    if ($_.Exception.Response) { $baseStatus = [int]$_.Exception.Response.StatusCode }
+    if ($baseStatus) {
+        Write-Host "  Reachable, but HTTP $baseStatus - server responded, that's still useful to know." -ForegroundColor Yellow
+    }
+    else {
+        Write-Host "  UNREACHABLE: $($_.Exception.Message)" -ForegroundColor Red
+        Write-Host '  -> Check VPN/network and the URL itself before going further.' -ForegroundColor Yellow
+    }
+}
+
+Write-Host ''
 Write-Host "Calling $BaseUrl/api/v1/me (Nuxeo's 'who am I' check) ..."
 $params = @{
     Uri         = "$($BaseUrl.TrimEnd('/'))/api/v1/me"
@@ -138,15 +158,27 @@ catch {
     if ($_.Exception.Response) { $statusCode = [int]$_.Exception.Response.StatusCode }
     if ($statusCode) { Write-Host "  HTTP status: $statusCode" -ForegroundColor Red }
     Write-Host "  $($_.Exception.Message)" -ForegroundColor Red
+    if ($_.ErrorDetails -and $_.ErrorDetails.Message) {
+        Write-Host ''
+        Write-Host '  Response body (this usually has the real reason):' -ForegroundColor Red
+        Write-Host "  $($_.ErrorDetails.Message)" -ForegroundColor Red
+    }
     if ($statusCode -eq 401) {
         Write-Host '  -> Username or password is wrong, or this account has no Nuxeo access.' -ForegroundColor Yellow
+    }
+    elseif ($statusCode -eq 500) {
+        Write-Host '  -> The request reached Nuxeo and it accepted the connection, but something' -ForegroundColor Yellow
+        Write-Host '     threw server-side. See the response body above for the real cause - common' -ForegroundColor Yellow
+        Write-Host '     ones: this Nuxeo version does not implement /api/v1/me the way expected,' -ForegroundColor Yellow
+        Write-Host '     a required header is missing, or the account hit a server-side bug/quirk.' -ForegroundColor Yellow
+        Write-Host '     Worth trying -TestPath against a known document even though this failed -' -ForegroundColor Yellow
+        Write-Host '     the /api/v1/path/ endpoint might behave differently.' -ForegroundColor Yellow
     }
     elseif (-not $statusCode) {
         Write-Host '  -> Could not reach the server at all: check VPN/network, the URL itself,' -ForegroundColor Yellow
         Write-Host '     and TLS/certificate issues (only try -SkipCertificateCheck if you' -ForegroundColor Yellow
         Write-Host '     understand the risk and know it is a known internal cert issue).' -ForegroundColor Yellow
     }
-    return
 }
 
 if ($TestPath) {
