@@ -18,6 +18,13 @@
         <root>\<CaseType>\<FamilyNumber (6 digits, zero-padded)>\<Country>\<Extension>\<DOC_FILE_NAME>
     Adjust the padding/casing expressions below if the real folders differ,
     then compare a few rows against Windows Explorer to confirm.
+
+    Export format: real DOC_FILE_NAME values can contain a literal ';'
+    (seen in production data, e.g. "4778705;21165771.TIF") - do NOT export
+    this particular result as semicolon-delimited CSV, it would silently
+    corrupt those rows. Tab-delimited ("Results to Text", or copy straight
+    out of the grid) or comma-delimited CSV are both fine and auto-detected
+    by Run-RenToMan.ps1.
 */
 
 :setvar LoginId ""

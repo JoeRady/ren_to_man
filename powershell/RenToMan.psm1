@@ -45,18 +45,21 @@ function Import-RenToManConfig {
 
 function Get-RenToManCsvDelimiter {
     <#
-        Auto-detects whether a CSV export uses ',' or ';' as the field
-        separator, by counting each in the header line. SSMS's "Save Results
-        As... CSV" follows the Windows regional "list separator" setting,
-        which is ';' on many non-English (e.g. German) locales rather than
-        the US-default ','.
+        Auto-detects whether a CSV/TSV export uses ',' , ';' or a tab as the
+        field separator, by counting each in the header line. SSMS's "Save
+        Results As... CSV" follows the Windows regional "list separator"
+        setting (';' on many non-English, e.g. German, locales rather than
+        the US-default ','), while "Results to Text" / copying straight out
+        of the grid produces tab-separated values instead.
     #>
     [CmdletBinding()]
     param([Parameter(Mandatory)][string] $Path)
 
     $header = Get-Content -LiteralPath $Path -TotalCount 1
+    $tabs = ($header -split "`t").Count - 1
     $semicolons = ($header -split ';').Count - 1
     $commas = ($header -split ',').Count - 1
+    if ($tabs -ge $semicolons -and $tabs -ge $commas -and $tabs -gt 0) { return "`t" }
     if ($semicolons -gt $commas) { return ';' }
     return ','
 }

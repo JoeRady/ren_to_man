@@ -65,6 +65,19 @@ Describe 'Get-RenToManCsvDelimiter' {
             Remove-Item -LiteralPath $tmpRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
+
+    It 'detects a tab-delimited header (e.g. SSMS "Results to Text" export)' {
+        $tmpRoot = Join-Path ([System.IO.Path]::GetTempPath()) ([Guid]::NewGuid())
+        New-Item -ItemType Directory -Path $tmpRoot | Out-Null
+        try {
+            $path = Join-Path $tmpRoot 'tab.csv'
+            Set-Content -Path $path -Value "A`tB`tC" -Encoding UTF8
+            Get-RenToManCsvDelimiter -Path $path | Should -Be "`t"
+        }
+        finally {
+            Remove-Item -LiteralPath $tmpRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
 }
 
 Describe 'New-RenToManPlanFromCsv' {
@@ -150,6 +163,32 @@ Describe 'New-RenToManPlanFromCsv' {
         $plan.Count | Should -Be 1
         Test-RenToManCopyable $plan[0] | Should -Be $true
         $plan[0].TargetPath | Should -Be 'D:\Main\Patricia\documents\2\666777\DE\EP\f.pdf'
+    }
+
+    It 'handles a tab-delimited source CSV whose filenames contain literal semicolons (SSMS "Results to Text" export)' {
+        $sourceCsv = Join-Path $tmpRoot 'source_documents.csv'
+        $mappingCsv = Join-Path $tmpRoot 'case_mapping.csv'
+
+        # Real Patricia document filenames can contain ';' - a semicolon-delimited
+        # export would corrupt this row, so this file must stay tab-delimited.
+        $sourceLines = @(
+            "DOC_LOG_ID`tCASE_ID`tLOGIN_ID`tLOG_DATE`tDOC_TYPE`tDOC_NAME`tDOC_FILE_NAME`tCATEGORY_ID`tSOURCE_PATH"
+            "2846098`t185179`tMJR`t2026-06-10 16:36:37.150`t4`t4778705;21165771.TIF`t4778705;21165771 1151382.TIF`t21`t\\brifile\Renewals\Patricia\documents\2\110278\CN\PC\4778705;21165771 1151382.TIF"
+        )
+        Set-Content -Path $sourceCsv -Value $sourceLines -Encoding UTF8
+
+        $mappingLines = @(
+            "RENEWALS_CASE_ID`tMAIN_LIVE_CASE_ID`tTARGET_FOLDER"
+            "185179`t285179`tD:\Main\Patricia\documents\2\110278\CN\PC"
+        )
+        Set-Content -Path $mappingCsv -Value $mappingLines -Encoding UTF8
+
+        $plan = @(New-RenToManPlanFromCsv -SourceDocumentsCsvPath $sourceCsv -CaseMappingCsvPath $mappingCsv)
+
+        $plan.Count | Should -Be 1
+        Test-RenToManCopyable $plan[0] | Should -Be $true
+        $plan[0].DocFileName | Should -Be '4778705;21165771 1151382.TIF'
+        $plan[0].TargetPath | Should -Be 'D:\Main\Patricia\documents\2\110278\CN\PC\4778705;21165771 1151382.TIF'
     }
 }
 
