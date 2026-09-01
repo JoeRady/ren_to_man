@@ -71,6 +71,25 @@ Before copying anything, it's worth checking whether a document has already
 made it across by some other route - both into Patricia Main's own
 `PAT_DOC_LOG` and into the Nuxeo document store at the corresponding path.
 
+Before your first verification run, confirm Nuxeo connectivity works at all
+with [`Test-NuxeoConnection.ps1`](Test-NuxeoConnection.ps1) - a standalone
+script with no dependency on the rest of the tool:
+
+```powershell
+# create powershell\nuxeo.credentials.txt first - copy
+# nuxeo.credentials.example.txt and fill in real values (plain text, only
+# for this one-off test - never commit it, delete it once you're done)
+.\Test-NuxeoConnection.ps1
+.\Test-NuxeoConnection.ps1 -TestPath '/Workspaces/Patricia/Documents/2/666777/DE/EP/somefile.pdf'
+```
+
+It reports plainly whether login works, and - importantly - whether
+building a `PSCredential` object is even possible in your environment (this
+has not been confirmed either way under Constrained Language Mode; if it's
+blocked there, report that back so a different auth approach can be worked
+out). Use `-TestPath` with a document you already know exists (or doesn't)
+to confirm `Get-RenToMainNuxeoPath`'s path convention is actually correct.
+
 1. Run [`sql/03_main_live_existing_documents.sql`](sql/03_main_live_existing_documents.sql)
    against `SQLSRV01\MAIN01` / `Patricia_Main_Live` (self-contained, no
    `:setvar` values needed). Export as `main_live_documents.csv`. Unlike
@@ -185,6 +204,8 @@ powershell/
   RenToMain.config.example.psd1     Configuration template (just Logging.LogDir)
   Run-RenToMain.ps1                 Steps 4-5 (join, optional verification, optional script generation)
   Build-RenToMainReport.ps1         Step 6: report from the copy script's JSONL log
+  Test-NuxeoConnection.ps1          Standalone Nuxeo login/path connectivity test, no other dependency
+  nuxeo.credentials.example.txt     Template for Test-NuxeoConnection.ps1's plain-text credential file
   RenToMain.nuxeo.credential.xml    Created on first verification run (gitignored) - encrypted Nuxeo credential
   sql/
     01_source_documents.sql         Steps 1-4, part 1: source documents (REN01), SOURCE_PATH pre-computed
