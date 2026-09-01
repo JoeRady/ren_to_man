@@ -7,14 +7,20 @@
 
 .DESCRIPTION
     Reads Username/Password from a plain-text credential file and calls
-    Nuxeo's "who am I" endpoint (/api/v1/me) to confirm the login works.
-    Optionally also checks one specific document path if you pass -TestPath.
+    Nuxeo's repository-root endpoint (/api/v1/path/) to confirm login and
+    the REST API both work - the same endpoint style
+    Test-RenToMainNuxeoDocumentExists uses for document checks, so success
+    here means the real verification step should work too. Also tries the
+    "who am I" endpoint (/api/v1/me), but treats its failure as informational
+    only: Nuxeo Platform 7.3 (confirmed in use here) may not implement it at
+    all, independent of whether login itself works. Optionally also checks
+    one specific document path if you pass -TestPath.
 
     This script is deliberately self-contained (no Import-Module) and
     reports each step's outcome plainly, including a clear diagnosis if
     PSCredential creation itself is blocked - which can happen under
-    PowerShell Constrained Language Mode (see powershell/README.md) and is
-    a real open question for this environment, not yet confirmed either way.
+    PowerShell Constrained Language Mode (see powershell/README.md); on this
+    corporate PC it was confirmed to work fine.
 
     SECURITY WARNING: the credential file this script reads is PLAIN TEXT.
     Only use this for one-off connectivity testing:
@@ -137,48 +143,72 @@ catch {
     }
 }
 
-Write-Host ''
-Write-Host "Calling $BaseUrl/api/v1/me (Nuxeo's 'who am I' check) ..."
-$params = @{
-    Uri         = "$($BaseUrl.TrimEnd('/'))/api/v1/me"
-    Method      = 'Get'
-    Credential  = $cred
-    ErrorAction = 'Stop'
-}
-if ($SkipCertificateCheck) { $params.SkipCertificateCheck = $true }
+function Write-NuxeoFailureDiagnosis {
+    param($ErrorRecord, [string] $Context)
 
-try {
-    $me = Invoke-RestMethod @params
-    Write-Host '  Login OK.' -ForegroundColor Green
-    Write-Host "  Nuxeo reports you as: $($me.id)"
-}
-catch {
     Write-Host '  FAILED' -ForegroundColor Red
     $statusCode = $null
-    if ($_.Exception.Response) { $statusCode = [int]$_.Exception.Response.StatusCode }
+    if ($ErrorRecord.Exception.Response) { $statusCode = [int]$ErrorRecord.Exception.Response.StatusCode }
     if ($statusCode) { Write-Host "  HTTP status: $statusCode" -ForegroundColor Red }
-    Write-Host "  $($_.Exception.Message)" -ForegroundColor Red
-    if ($_.ErrorDetails -and $_.ErrorDetails.Message) {
+    Write-Host "  $($ErrorRecord.Exception.Message)" -ForegroundColor Red
+    if ($ErrorRecord.ErrorDetails -and $ErrorRecord.ErrorDetails.Message) {
         Write-Host ''
         Write-Host '  Response body (this usually has the real reason):' -ForegroundColor Red
-        Write-Host "  $($_.ErrorDetails.Message)" -ForegroundColor Red
+        Write-Host "  $($ErrorRecord.ErrorDetails.Message)" -ForegroundColor Red
     }
     if ($statusCode -eq 401) {
         Write-Host '  -> Username or password is wrong, or this account has no Nuxeo access.' -ForegroundColor Yellow
     }
     elseif ($statusCode -eq 500) {
-        Write-Host '  -> The request reached Nuxeo and it accepted the connection, but something' -ForegroundColor Yellow
-        Write-Host '     threw server-side. See the response body above for the real cause - common' -ForegroundColor Yellow
-        Write-Host '     ones: this Nuxeo version does not implement /api/v1/me the way expected,' -ForegroundColor Yellow
-        Write-Host '     a required header is missing, or the account hit a server-side bug/quirk.' -ForegroundColor Yellow
-        Write-Host '     Worth trying -TestPath against a known document even though this failed -' -ForegroundColor Yellow
-        Write-Host '     the /api/v1/path/ endpoint might behave differently.' -ForegroundColor Yellow
+        Write-Host "  -> The request reached Nuxeo and it accepted the connection, but $Context" -ForegroundColor Yellow
+        Write-Host '     threw server-side. See the response body above for the real cause.' -ForegroundColor Yellow
     }
     elseif (-not $statusCode) {
         Write-Host '  -> Could not reach the server at all: check VPN/network, the URL itself,' -ForegroundColor Yellow
         Write-Host '     and TLS/certificate issues (only try -SkipCertificateCheck if you' -ForegroundColor Yellow
         Write-Host '     understand the risk and know it is a known internal cert issue).' -ForegroundColor Yellow
     }
+}
+
+Write-Host ''
+Write-Host "Calling $BaseUrl/api/v1/path/ (repository root - the same endpoint style" -NoNewline
+Write-Host ' Add-RenToMainVerification uses for document existence checks) ...'
+$rootParams = @{
+    Uri         = "$($BaseUrl.TrimEnd('/'))/api/v1/path/"
+    Method      = 'Get'
+    Credential  = $cred
+    ErrorAction = 'Stop'
+}
+if ($SkipCertificateCheck) { $rootParams.SkipCertificateCheck = $true }
+
+$rootOk = $false
+try {
+    $root = Invoke-RestMethod @rootParams
+    Write-Host '  Login + API OK.' -ForegroundColor Green
+    Write-Host "  Repository root title: $($root.title)"
+    $rootOk = $true
+}
+catch {
+    Write-NuxeoFailureDiagnosis -ErrorRecord $_ -Context 'the /api/v1/path/ call'
+}
+
+Write-Host ''
+Write-Host "Calling $BaseUrl/api/v1/me (optional - Nuxeo 7.x may not implement this endpoint at all, a failure here doesn't necessarily mean anything is wrong) ..."
+$meParams = @{
+    Uri         = "$($BaseUrl.TrimEnd('/'))/api/v1/me"
+    Method      = 'Get'
+    Credential  = $cred
+    ErrorAction = 'Stop'
+}
+if ($SkipCertificateCheck) { $meParams.SkipCertificateCheck = $true }
+
+try {
+    $me = Invoke-RestMethod @meParams
+    Write-Host '  OK.' -ForegroundColor Green
+    Write-Host "  Nuxeo reports you as: $($me.id)"
+}
+catch {
+    Write-NuxeoFailureDiagnosis -ErrorRecord $_ -Context 'the /api/v1/me call (this endpoint may simply not exist on your Nuxeo version)'
 }
 
 if ($TestPath) {
