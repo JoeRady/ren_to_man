@@ -45,23 +45,32 @@ way the database is ever queried (see
 4. List the found documents (source path, `DOC_LOG_ID`, `LOG_DATE`,
    `DOC_NAME`, `DOC_FILE_NAME`, target path) as CSV - read-only; PowerShell
    only ever queries the CSVs you exported, never the database itself
-5. Copy: `Run-RenToMain.ps1 -GenerateCopyScript` generates a standalone,
-   database-independent copy script to review before running; it creates
-   target folders and handles filenames with umlauts correctly (Unicode)
-6. `Build-RenToMainReport.ps1` builds a human-readable report from the copy
+5. Verify (recommended) each document against Main-Live's `PAT_DOC_LOG` and,
+   live, against Nuxeo, then decide per document: nothing to do, copy only,
+   copy + create a new `PAT_DOC_LOG` row, or create the row only - see
+   [`powershell/README.md`](powershell/README.md#step-45-recommended-verify-against-main-live-and-nuxeo)
+6. Copy/insert: `Run-RenToMain.ps1 -GenerateCopyScript` generates a
+   standalone, database-independent copy script and (if needed) a reviewable
+   SQL insert script - nothing is copied or written by the tool itself; it
+   creates target folders and handles filenames with umlauts correctly
+   (Unicode)
+7. `Build-RenToMainReport.ps1` builds a human-readable report from the copy
    script's log
 
 ## Known assumptions / open points for future iterations
 
 - The **folder-naming convention** (padding of Case Type/Family Number,
   upper/lower casing of Country/Extension) is a best guess baked directly
-  into the SQL scripts and should be verified against real listing runs
-  before generating/running a copy script.
+  into the SQL scripts and, for Nuxeo, into `Get-RenToMainNuxeoPath` - should
+  be verified against real listing/verification runs before
+  generating/running the copy or insert script.
 - Assumes exactly one file per `PAT_DOC_LOG` entry (`DOC_FILE_NAME` inside
   the case folder). Multiple files/attachments per document aren't handled
   yet.
-- No `PAT_DOC_LOG` entry is created on the Main side yet - only the
-  filesystem copy happens.
+- The Nuxeo path convention used for the live existence check has not been
+  verified against the real server yet.
+- The generated `PAT_DOC_LOG` insert only populates a minimal column set -
+  confirm with your DBA whether other columns need real values.
 - Existing target files are skipped, never overwritten.
 - Log/report are local files (JSONL/CSV/TXT), not a database table.
 - If it turns out Constrained Language Mode doesn't actually apply to you

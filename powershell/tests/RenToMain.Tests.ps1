@@ -280,3 +280,134 @@ Describe 'Write-RenToMainCandidateCsv' {
         }
     }
 }
+
+Describe 'Get-RenToMainNuxeoPath' {
+    It 'builds the Nuxeo path with the same zero-padding convention as the filesystem target' {
+        $planned = [pscustomobject]@{
+            MainCaseTypeId = 2; MainCaseNumber = 666777; MainCountry = 'de'
+            MainExtension  = 'EP'; DocFileName = "ümlaut ' file.pdf"
+        }
+        $path = Get-RenToMainNuxeoPath -RootPath '\Workspaces\Patricia\Documents\' -Planned $planned
+        $path | Should -Be "Workspaces/Patricia/Documents/2/666777/DE/EP/ümlaut ' file.pdf"
+    }
+}
+
+Describe 'ConvertTo-RenToMainSqlStringLiteral' {
+    It 'escapes single quotes and wraps in N-prefixed quotes' {
+        ConvertTo-RenToMainSqlStringLiteral "O'Brien" | Should -Be "N'O''Brien'"
+    }
+    It 'returns the literal NULL keyword for $null' {
+        ConvertTo-RenToMainSqlStringLiteral $null | Should -Be 'NULL'
+    }
+    It 'returns the literal NULL keyword for an empty string' {
+        ConvertTo-RenToMainSqlStringLiteral '' | Should -Be 'NULL'
+    }
+}
+
+Describe 'Test-RenToMainCopyable / Test-RenToMainInsertNeeded' {
+    It 'falls back to the pre-verification rule when Action was never set (e.g. plain unit-test fixtures)' {
+        $planned = [pscustomobject]@{
+            SourcePath = 'C:\src\f.pdf'; TargetPath = 'C:\dst\f.pdf'; SkipReason = $null
+        }
+        Test-RenToMainCopyable $planned | Should -Be $true
+        Test-RenToMainInsertNeeded $planned | Should -Be $false
+    }
+
+    It 'uses Action when present' {
+        $copyAndInsert = [pscustomobject]@{ Action = 'CopyAndInsert' }
+        $insertOnly = [pscustomobject]@{ Action = 'InsertOnly' }
+        $noAction = [pscustomobject]@{ Action = 'NoAction' }
+
+        Test-RenToMainCopyable $copyAndInsert | Should -Be $true
+        Test-RenToMainInsertNeeded $copyAndInsert | Should -Be $true
+
+        Test-RenToMainCopyable $insertOnly | Should -Be $false
+        Test-RenToMainInsertNeeded $insertOnly | Should -Be $true
+
+        Test-RenToMainCopyable $noAction | Should -Be $false
+        Test-RenToMainInsertNeeded $noAction | Should -Be $false
+    }
+}
+
+Describe 'Add-RenToMainVerification' {
+    BeforeEach {
+        $script:tmpRoot = Join-Path ([System.IO.Path]::GetTempPath()) ([Guid]::NewGuid())
+        New-Item -ItemType Directory -Path $tmpRoot | Out-Null
+    }
+    AfterEach {
+        Remove-Item -LiteralPath $tmpRoot -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
+    It 'applies the full decision matrix (Main-Live x Nuxeo -> Action)' {
+        $mainLiveCsv = Join-Path $tmpRoot 'main_live_documents.csv'
+        $mainLiveLines = @(
+            'CASE_ID,DOC_FILE_NAME'
+            '200,both.pdf'      # in Main-Live
+            '200,mainonly.pdf'  # in Main-Live
+        )
+        Set-Content -Path $mainLiveCsv -Value $mainLiveLines -Encoding UTF8
+
+        $plan = @(
+            [pscustomobject]@{ DocLogId = 1; MainCaseId = 200; DocFileName = 'both.pdf'; MainCaseTypeId = 2; MainCaseNumber = 1; MainCountry = 'DE'; MainExtension = 'EP'; SkipReason = $null }
+            [pscustomobject]@{ DocLogId = 2; MainCaseId = 200; DocFileName = 'mainonly.pdf'; MainCaseTypeId = 2; MainCaseNumber = 1; MainCountry = 'DE'; MainExtension = 'EP'; SkipReason = $null }
+            [pscustomobject]@{ DocLogId = 3; MainCaseId = 200; DocFileName = 'neither.pdf'; MainCaseTypeId = 2; MainCaseNumber = 1; MainCountry = 'DE'; MainExtension = 'EP'; SkipReason = $null }
+            [pscustomobject]@{ DocLogId = 4; MainCaseId = 200; DocFileName = 'nuxeoonly.pdf'; MainCaseTypeId = 2; MainCaseNumber = 1; MainCountry = 'DE'; MainExtension = 'EP'; SkipReason = $null }
+            [pscustomobject]@{ DocLogId = 5; MainCaseId = 200; DocFileName = 'inconclusive.pdf'; MainCaseTypeId = 2; MainCaseNumber = 1; MainCountry = 'DE'; MainExtension = 'EP'; SkipReason = $null }
+            [pscustomobject]@{ DocLogId = 6; MainCaseId = $null; DocFileName = $null; MainCaseTypeId = $null; MainCaseNumber = $null; MainCountry = $null; MainExtension = $null; SkipReason = 'no mapping' }
+        )
+
+        Mock -ModuleName RenToMain -CommandName Test-RenToMainNuxeoDocumentExists -MockWith {
+            param($BaseUrl, $Path, $Credential, [switch] $SkipCertificateCheck)
+            if ($Path -like '*/both.pdf') { return $true }
+            if ($Path -like '*/mainonly.pdf') { return $false }
+            if ($Path -like '*/neither.pdf') { return $false }
+            if ($Path -like '*/nuxeoonly.pdf') { return $true }
+            if ($Path -like '*/inconclusive.pdf') { return $null }
+            return $null
+        }
+
+        # NuxeoCredential is untyped in Add-RenToMainVerification and never
+        # actually used here since Test-RenToMainNuxeoDocumentExists is
+        # mocked - a plain string avoids constructing a PSCredential (not a
+        # Constrained-Language-Mode "core type") just for this test.
+        $result = @(Add-RenToMainVerification -Plan $plan -MainLiveDocumentsCsvPath $mainLiveCsv `
+            -NuxeoBaseUrl 'https://nuxeo.example' -NuxeoRootPath '/Workspaces/Patricia/Documents' `
+            -NuxeoCredential 'dummy')
+
+        ($result | Where-Object DocLogId -eq 1).Action | Should -Be 'NoAction'
+        ($result | Where-Object DocLogId -eq 2).Action | Should -Be 'CopyOnly'
+        ($result | Where-Object DocLogId -eq 3).Action | Should -Be 'CopyAndInsert'
+        ($result | Where-Object DocLogId -eq 4).Action | Should -Be 'InsertOnly'
+        ($result | Where-Object DocLogId -eq 5).Action | Should -Be 'VerificationFailed'
+        ($result | Where-Object DocLogId -eq 6).Action | Should -Be 'NoAction'
+    }
+}
+
+Describe 'New-RenToMainInsertScript' {
+    BeforeEach {
+        $script:tmpRoot = Join-Path ([System.IO.Path]::GetTempPath()) ([Guid]::NewGuid())
+        New-Item -ItemType Directory -Path $tmpRoot | Out-Null
+    }
+    AfterEach {
+        Remove-Item -LiteralPath $tmpRoot -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
+    It 'only includes items whose Action needs an insert' {
+        $plan = @(
+            [pscustomobject]@{ DocLogId = 1; MainCaseId = 200; LoginId = 'jsmith'; LogDate = '2026-01-01'; DocType = '4'; DocName = 'Doc'; DocFileName = 'a.pdf'; CategoryId = '5'; Action = 'CopyAndInsert' }
+            [pscustomobject]@{ DocLogId = 2; MainCaseId = 201; LoginId = 'jsmith'; LogDate = '2026-01-02'; DocType = '4'; DocName = 'Doc2'; DocFileName = 'b.pdf'; CategoryId = '5'; Action = 'InsertOnly' }
+            [pscustomobject]@{ DocLogId = 3; MainCaseId = 202; LoginId = 'jsmith'; LogDate = '2026-01-03'; DocType = '4'; DocName = 'Doc3'; DocFileName = 'c.pdf'; CategoryId = '5'; Action = 'CopyOnly' }
+            [pscustomobject]@{ DocLogId = 4; MainCaseId = 203; LoginId = 'jsmith'; LogDate = '2026-01-04'; DocType = '4'; DocName = 'Doc4'; DocFileName = 'd.pdf'; CategoryId = '5'; Action = 'NoAction' }
+        )
+        $scriptPath = Join-Path $tmpRoot 'insert.sql'
+
+        $genResult = New-RenToMainInsertScript -Plan $plan -Path $scriptPath
+
+        $genResult.RowCount | Should -Be 2
+        $content = Get-Content -LiteralPath $scriptPath -Raw
+        $content | Should -Match "N'a\.pdf'"
+        $content | Should -Match "N'b\.pdf'"
+        $content | Should -Not -Match "N'c\.pdf'"
+        $content | Should -Not -Match "N'd\.pdf'"
+    }
+}

@@ -8,5 +8,6 @@ logs/
 
 # PowerShell variant
 powershell/RenToMain.config.psd1
+powershell/RenToMain.nuxeo.credential.xml
 powershell/logs/
 testResults.xml
