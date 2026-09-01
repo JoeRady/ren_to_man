@@ -13,6 +13,10 @@
 
     In SSMS: Results to Grid -> right-click the result grid -> "Save Results
     As..." -> CSV. Or enable "Results to File" before running the query.
+
+    Note: on some Windows locales (e.g. German) SSMS's CSV export uses ';'
+    as the field separator instead of ','. Run-RenToMan.ps1 auto-detects
+    this, so either is fine - no need to change your regional settings.
 */
 
 :setvar TargetRoot "\\brimain\Main\Patricia\documents"
@@ -36,4 +40,5 @@ SELECT
 FROM dbo.wr_Renewals_vs_Main_Live m
 JOIN dbo.PAT_CASE c
     ON c.CASE_ID = m.MAIN_LIVE_CASE_ID
+WHERE m.RENEWALS_CASE_ID IS NOT NULL
 ORDER BY m.RENEWALS_CASE_ID;

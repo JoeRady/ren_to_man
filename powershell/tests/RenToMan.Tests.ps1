@@ -39,6 +39,34 @@ Describe 'ConvertTo-RenToManPsStringLiteral' {
     }
 }
 
+Describe 'Get-RenToManCsvDelimiter' {
+    It 'detects a semicolon-delimited header (e.g. German-locale SSMS export)' {
+        $tmpRoot = Join-Path ([System.IO.Path]::GetTempPath()) ([Guid]::NewGuid())
+        New-Item -ItemType Directory -Path $tmpRoot | Out-Null
+        try {
+            $path = Join-Path $tmpRoot 'semi.csv'
+            Set-Content -Path $path -Value 'A;B;C' -Encoding UTF8
+            Get-RenToManCsvDelimiter -Path $path | Should -Be ';'
+        }
+        finally {
+            Remove-Item -LiteralPath $tmpRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'detects a comma-delimited header' {
+        $tmpRoot = Join-Path ([System.IO.Path]::GetTempPath()) ([Guid]::NewGuid())
+        New-Item -ItemType Directory -Path $tmpRoot | Out-Null
+        try {
+            $path = Join-Path $tmpRoot 'comma.csv'
+            Set-Content -Path $path -Value 'A,B,C' -Encoding UTF8
+            Get-RenToManCsvDelimiter -Path $path | Should -Be ','
+        }
+        finally {
+            Remove-Item -LiteralPath $tmpRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
 Describe 'New-RenToManPlanFromCsv' {
     BeforeEach {
         $script:tmpRoot = Join-Path ([System.IO.Path]::GetTempPath()) ([Guid]::NewGuid())
@@ -96,6 +124,32 @@ Describe 'New-RenToManPlanFromCsv' {
         $plan.Count | Should -Be 1
         Test-RenToManCopyable $plan[0] | Should -Be $false
         $plan[0].SkipReason | Should -Match 'mapping'
+    }
+
+    It 'handles a semicolon-delimited mapping CSV with NULL rows (German-locale SSMS export)' {
+        $sourceCsv = Join-Path $tmpRoot 'source_documents.csv'
+        $mappingCsv = Join-Path $tmpRoot 'case_mapping.csv'
+
+        @(
+            [pscustomobject]@{
+                DOC_LOG_ID = 1; CASE_ID = 100; LOGIN_ID = 'jsmith'; LOG_DATE = '2026-01-01'
+                DOC_NAME = 'Doc'; DOC_FILE_NAME = 'f.pdf'; CATEGORY_ID = 5
+                SOURCE_PATH = 'C:\src\f.pdf'
+            }
+        ) | Export-Csv -Path $sourceCsv -NoTypeInformation -Encoding UTF8
+
+        $mappingLines = @(
+            'RENEWALS_CASE_ID;MAIN_LIVE_CASE_ID;CASE_TYPE_ID;CASE_NUMBER;COUNTRY;CASE_NUMBER_EXTENSION;TARGET_FOLDER'
+            'NULL;413224;6;514324;GB;0;D:\Main\Patricia\documents\6\514324\GB\00'
+            '100;200;2;666777;DE;EP;D:\Main\Patricia\documents\2\666777\DE\EP'
+        )
+        Set-Content -Path $mappingCsv -Value $mappingLines -Encoding UTF8
+
+        $plan = @(New-RenToManPlanFromCsv -SourceDocumentsCsvPath $sourceCsv -CaseMappingCsvPath $mappingCsv)
+
+        $plan.Count | Should -Be 1
+        Test-RenToManCopyable $plan[0] | Should -Be $true
+        $plan[0].TargetPath | Should -Be 'D:\Main\Patricia\documents\2\666777\DE\EP\f.pdf'
     }
 }
 

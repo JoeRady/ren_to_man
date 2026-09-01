@@ -43,6 +43,24 @@ function Import-RenToManConfig {
     return $cfg
 }
 
+function Get-RenToManCsvDelimiter {
+    <#
+        Auto-detects whether a CSV export uses ',' or ';' as the field
+        separator, by counting each in the header line. SSMS's "Save Results
+        As... CSV" follows the Windows regional "list separator" setting,
+        which is ';' on many non-English (e.g. German) locales rather than
+        the US-default ','.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string] $Path)
+
+    $header = Get-Content -LiteralPath $Path -TotalCount 1
+    $semicolons = ($header -split ';').Count - 1
+    $commas = ($header -split ',').Count - 1
+    if ($semicolons -gt $commas) { return ';' }
+    return ','
+}
+
 function New-RenToManPlanFromCsv {
     <#
         Step 4: join the two CSV exports (source documents with SOURCE_PATH
@@ -68,12 +86,17 @@ function New-RenToManPlanFromCsv {
         throw "Case mapping CSV not found: $CaseMappingCsvPath"
     }
 
-    $sourceDocs = @(Import-Csv -LiteralPath $SourceDocumentsCsvPath)
-    $mappingRows = @(Import-Csv -LiteralPath $CaseMappingCsvPath)
+    $sourceDocs = @(Import-Csv -LiteralPath $SourceDocumentsCsvPath -Delimiter (Get-RenToManCsvDelimiter $SourceDocumentsCsvPath))
+    $mappingRows = @(Import-Csv -LiteralPath $CaseMappingCsvPath -Delimiter (Get-RenToManCsvDelimiter $CaseMappingCsvPath))
 
     $mappingByCaseId = @{}
     foreach ($m in $mappingRows) {
-        $mappingByCaseId[[string]$m.RENEWALS_CASE_ID] = $m
+        # Rows where the Main-side case has no Renewals counterpart export as
+        # a literal "NULL" (or blank) RENEWALS_CASE_ID - skip them, they can
+        # never match a source document's CASE_ID.
+        if ($m.RENEWALS_CASE_ID -and $m.RENEWALS_CASE_ID -ne 'NULL') {
+            $mappingByCaseId[[string]$m.RENEWALS_CASE_ID] = $m
+        }
     }
 
     $plan = foreach ($e in $sourceDocs) {
