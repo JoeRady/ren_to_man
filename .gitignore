@@ -7,6 +7,6 @@ logs/
 .pytest_cache/
 
 # PowerShell variant
-powershell/RenToMan.config.psd1
+powershell/RenToMain.config.psd1
 powershell/logs/
 testResults.xml

@@ -1,14 +1,14 @@
 <#
 .SYNOPSIS
-    Builds a human-readable text report from a ren_to_man copy-script JSONL log.
+    Builds a human-readable text report from a ren_to_main copy-script JSONL log.
 
 .DESCRIPTION
     Step 6, decoupled from the copy step: reads the JSONL log written by a
-    script generated with New-RenToManCopyScript (or by Run-RenToMan.ps1
+    script generated with New-RenToMainCopyScript (or by Run-RenToMain.ps1
     -Execute) and writes a summary report. Needs no database connection.
 
 .EXAMPLE
-    .\Build-RenToManReport.ps1 -LogPath .\logs\copy_log_20260101_120000.jsonl
+    .\Build-RenToMainReport.ps1 -LogPath .\logs\copy_log_20260101_120000.jsonl
 #>
 [CmdletBinding()]
 param(
@@ -38,7 +38,7 @@ $detailLines = @($records | Where-Object { $_.status -in @('missing_source', 'er
 $countLines = @('copied', 'skipped', 'missing_source', 'error') | ForEach-Object { "  ${_}: $($counts[$_])" }
 
 $lines = @(
-    'ren_to_man copy report'
+    'ren_to_main copy report'
     "generated: $((Get-Date).ToString('o'))"
     "source log: $LogPath"
     ''

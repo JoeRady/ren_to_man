@@ -15,7 +15,7 @@
     As..." -> CSV. Or enable "Results to File" before running the query.
 
     Note: on some Windows locales (e.g. German) SSMS's CSV export uses ';'
-    as the field separator instead of ','. Run-RenToMan.ps1 auto-detects
+    as the field separator instead of ','. Run-RenToMain.ps1 auto-detects
     this, so either is fine - no need to change your regional settings.
 */
 

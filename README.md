@@ -1,72 +1,69 @@
-# ren_to_man
+# ren_to_main
 
-Findet Patricia-Dokumente, die von der **Renewals**- in die **Main**-Instanz
-kopiert werden sollen: liest `PAT_DOC_LOG` / `PAT_CASE` auf der Quellseite,
-mappt die `CASE_ID` über `wr_Renewals_vs_Main_Live` auf die Ziel-`CASE_ID`,
-baut Quell- und Zielpfad anhand der vierstufigen Ordnerstruktur (`Case Type /
-Family Number / Country / Case Number Extension`).
+Finds Patricia documents that need to be copied from the **Renewals**
+instance to the **Main** instance: reads `PAT_DOC_LOG` / `PAT_CASE` on the
+source side, maps `CASE_ID` to the target `CASE_ID` via
+`wr_Renewals_vs_Main_Live`, and builds the source/target path from the
+four-level folder structure (`Case Type / Family Number / Country / Case
+Number Extension`).
 
-**Sicherheitsmodell:** Die SQL-Abfragen (siehe [`powershell/sql/`](powershell/sql/))
-sind reine `SELECT`-Statements — keine einzige schreibt in die Datenbank.
-Die primäre **PowerShell-Variante spricht die Datenbank inzwischen gar nicht
-mehr selbst an** (siehe Hinweis unten zu Constrained Language Mode): du
-führst die SQL-Skripte selbst z.B. in SSMS aus und exportierst die Ergebnisse
-als CSV, das Tool liest nur noch diese CSVs. Das eigentliche Kopieren
-(Schritt 5) passiert nicht direkt, sondern über ein separat generiertes,
-eigenständiges Skript ohne jede Datenbankabhängigkeit, das vor der Ausführung
-vollständig geprüft werden kann.
+**Security model:** The SQL queries (see [`powershell/sql/`](powershell/sql/))
+are pure `SELECT` statements - not a single one writes to the database. The
+primary **PowerShell variant no longer talks to the database itself at all**
+(see the Constrained Language Mode note below): you run the SQL scripts
+yourself, e.g. in SSMS, and export the results as CSV; the tool only reads
+those CSVs. The actual copying (step 5) doesn't happen directly, but through
+a separately generated, standalone script with no database dependency at
+all, which can be fully reviewed before it runs.
 
-## Varianten
+## Variants
 
-| Variante | Ordner | Wann verwenden |
+| Variant | Folder | When to use |
 |---|---|---|
-| **PowerShell** | [`powershell/`](powershell/README.md) | **Primär.** CSV/SSMS-basiert, funktioniert auch unter PowerShell **Constrained Language Mode** (häufig auf Corporate-Windows-Rechnern per AppLocker/WDAC erzwungen) und unabhängig von Adminrechten. |
-| Python | [`python/`](python/README.md) | Alternative mit direkter DB-Anbindung (`pyodbc`) und direktem Kopieren — nur nutzbar, wenn Python ausführbar ist und keine Language-Mode-Einschränkung greift. |
+| **PowerShell** (`RenToMain`) | [`powershell/`](powershell/README.md) | **Primary.** CSV/SSMS-based, also works under PowerShell **Constrained Language Mode** (commonly enforced on corporate Windows machines via AppLocker/WDAC) and independent of admin rights. |
+| Python | [`python/`](python/README.md) | Alternative with direct DB access (`pyodbc`) and direct copying - only usable if Python can be run and no language-mode restriction applies. |
 
-Die Python-Variante ist seit der letzten größeren Iteration nicht mehr auf
-dem gleichen Stand wie PowerShell (kein CSV-Workflow, direkter DB-Zugriff und
-Direktkopie) — siehe [`python/README.md`](python/README.md).
+The Python variant hasn't kept pace with PowerShell since the latest major
+iteration (no CSV workflow, direct DB access and direct copying) - see
+[`python/README.md`](python/README.md). Its docs remain in German for now.
 
-## Eigenständig testbare SQL-Abfragen für Schritt 4
+## Standalone-testable SQL queries for step 4
 
-Unter [`powershell/sql/`](powershell/sql/) liegen die für Schritt 4
-("Auflistung der gefundenen Dokumente") verwendeten SQL-Skripte, parametrisiert
-über `:setvar`-Variablen, damit sie direkt in SSMS oder per `sqlcmd` gegen die
-echten Instanzen getestet werden können — das ist bei der PowerShell-Variante
-inzwischen sogar der reguläre, einzige Weg, wie die Datenbank überhaupt
-abgefragt wird (siehe [`powershell/README.md`](powershell/README.md#wichtig-powershell-constrained-language-mode)).
+Under [`powershell/sql/`](powershell/sql/) are the SQL scripts used for step
+4 ("list the found documents"), parameterized via `:setvar` variables so
+they can be tested directly in SSMS or via `sqlcmd` against the real
+instances - for the PowerShell variant this is now in fact the regular, only
+way the database is ever queried (see
+[`powershell/README.md`](powershell/README.md#important-powershell-constrained-language-mode)).
 
-## Schritte 1-6 (Kurzüberblick)
+## Steps 1-6 (quick overview)
 
-1. Eingabe `LOGIN_ID` und/oder `CATEGORY_ID` (mindestens eines von beiden) —
-   als `:setvar` im SQL-Skript
-2. Zeitraum von...bis — ebenfalls als `:setvar`
-3. Zielpfad (Root der Main-Ordnerstruktur) — ebenfalls als `:setvar`
-4. Auflistung der gefundenen Dokumente (Quellpfad, `DOC_LOG_ID`, `LOG_DATE`,
-   `DOC_NAME`, `DOC_FILE_NAME`, Zielpfad) als CSV — rein lesend, PowerShell
-   fragt dafür nur noch die von dir exportierten CSVs ab, nie die Datenbank
-   selbst
-5. Kopieren: `Run-RenToMan.ps1 -GenerateCopyScript` erzeugt ein
-   eigenständiges, DB-unabhängiges Kopierskript zum Prüfen vor der
-   Ausführung; legt Zielordner an und behandelt Dateinamen mit Umlauten
-   korrekt (Unicode)
-6. `Build-RenToManReport.ps1` erzeugt aus dem Log des Kopierskripts einen
-   menschenlesbaren Report
+1. Enter `LOGIN_ID` and/or `CATEGORY_ID` (at least one of the two) - as
+   `:setvar` in the SQL script
+2. Date range from...to - also as `:setvar`
+3. Target path (root of the Main folder structure) - also as `:setvar`
+4. List the found documents (source path, `DOC_LOG_ID`, `LOG_DATE`,
+   `DOC_NAME`, `DOC_FILE_NAME`, target path) as CSV - read-only; PowerShell
+   only ever queries the CSVs you exported, never the database itself
+5. Copy: `Run-RenToMain.ps1 -GenerateCopyScript` generates a standalone,
+   database-independent copy script to review before running; it creates
+   target folders and handles filenames with umlauts correctly (Unicode)
+6. `Build-RenToMainReport.ps1` builds a human-readable report from the copy
+   script's log
 
-## Bekannte Annahmen / offene Punkte für weitere Iterationen
+## Known assumptions / open points for future iterations
 
-- **Ordner-Namenskonvention** (Padding von Case Type/Family Number,
-  Groß-/Kleinschreibung von Country/Extension) ist als Best-Guess direkt in
-  den SQL-Skripten hinterlegt und sollte anhand echter Listing-Läufe
-  verifiziert werden, bevor ein Kopierskript erzeugt/ausgeführt wird.
-- Es wird angenommen, dass genau eine Datei pro `PAT_DOC_LOG`-Eintrag
-  existiert (`DOC_FILE_NAME` im Case-Ordner). Mehrere Dateien/Anhänge pro
-  Dokument sind noch nicht abgebildet.
-- Es wird bislang **kein** `PAT_DOC_LOG`-Eintrag auf der Main-Seite angelegt —
-  es werden nur die Dateien auf dem Filesystem kopiert.
-- Bereits vorhandene Zieldateien werden übersprungen, nicht überschrieben.
-- Log/Report liegen als lokale Dateien (JSONL/CSV/TXT), nicht in einer
-  DB-Tabelle.
-- Falls sich herausstellt, dass bei euch doch kein Constrained Language Mode
-  gilt (oder IT `sqlcmd`/`SqlServer`-Modul bereitstellt), könnte eine direkte
-  DB-Anbindung wieder ergänzt werden — aktuell bewusst nicht eingebaut.
+- The **folder-naming convention** (padding of Case Type/Family Number,
+  upper/lower casing of Country/Extension) is a best guess baked directly
+  into the SQL scripts and should be verified against real listing runs
+  before generating/running a copy script.
+- Assumes exactly one file per `PAT_DOC_LOG` entry (`DOC_FILE_NAME` inside
+  the case folder). Multiple files/attachments per document aren't handled
+  yet.
+- No `PAT_DOC_LOG` entry is created on the Main side yet - only the
+  filesystem copy happens.
+- Existing target files are skipped, never overwritten.
+- Log/report are local files (JSONL/CSV/TXT), not a database table.
+- If it turns out Constrained Language Mode doesn't actually apply to you
+  (or IT provides the `sqlcmd`/`SqlServer` module), a direct database
+  connection could be added back in - deliberately not built in right now.

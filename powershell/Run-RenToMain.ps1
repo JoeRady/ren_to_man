@@ -17,14 +17,14 @@
              your TargetRoot :setvar value) against SQLSRV01\MAIN01 and
              export that result grid as CSV too (this one does not depend on
              the search filters and can be reused across runs).
-      4.     This script (Run-RenToMan.ps1) joins those two CSVs, lists the
+      4.     This script (Run-RenToMain.ps1) joins those two CSVs, lists the
              resulting candidates (source path, DOC_LOG_ID, LOG_DATE,
              DOC_NAME, DOC_FILE_NAME, target path) to a new CSV.
       5.     With -GenerateCopyScript: generates a second, standalone .ps1
              file that does the actual copying. That script has NO database
              dependency and needs only filesystem access, so it can be
              reviewed before running, and prompts for confirmation.
-      6.     After the copy script has run, use .\Build-RenToManReport.ps1
+      6.     After the copy script has run, use .\Build-RenToMainReport.ps1
              to build the report from its log.
 
     This script itself never touches the filesystem beyond writing its own
@@ -37,7 +37,7 @@
     CSV exported from powershell/sql/02_case_mapping_and_target_paths.sql.
 
 .PARAMETER ConfigPath
-    Path to the config data file (default: .\RenToMan.config.psd1 next to
+    Path to the config data file (default: .\RenToMain.config.psd1 next to
     this script).
 
 .PARAMETER GenerateCopyScript
@@ -49,7 +49,7 @@
     (default: Logging.LogDir from the config file).
 
 .EXAMPLE
-    .\Run-RenToMan.ps1 -SourceDocumentsCsvPath .\source_documents.csv `
+    .\Run-RenToMain.ps1 -SourceDocumentsCsvPath .\source_documents.csv `
         -CaseMappingCsvPath .\case_mapping.csv -GenerateCopyScript
 #>
 [CmdletBinding()]
@@ -57,31 +57,31 @@ param(
     [Parameter(Mandatory)][string] $SourceDocumentsCsvPath,
     [Parameter(Mandatory)][string] $CaseMappingCsvPath,
 
-    [string] $ConfigPath = (Join-Path $PSScriptRoot 'RenToMan.config.psd1'),
+    [string] $ConfigPath = (Join-Path $PSScriptRoot 'RenToMain.config.psd1'),
     [switch] $GenerateCopyScript,
     [string] $OutDir
 )
 
 $ErrorActionPreference = 'Stop'
 
-Import-Module (Join-Path $PSScriptRoot 'RenToMan.psd1') -Force
+Import-Module (Join-Path $PSScriptRoot 'RenToMain.psd1') -Force
 
 Write-Host 'Loading config...'
-$cfg = Import-RenToManConfig -Path $ConfigPath
+$cfg = Import-RenToMainConfig -Path $ConfigPath
 
 $logDir = if ($OutDir) { $OutDir } else { $cfg.Logging.LogDir }
 if (-not (Test-Path -LiteralPath $logDir)) { New-Item -ItemType Directory -Path $logDir -Force | Out-Null }
 $runStamp = Get-Date -Format 'yyyyMMdd_HHmmss'
 
 Write-Host "Joining $SourceDocumentsCsvPath and $CaseMappingCsvPath ..."
-$plan = @(New-RenToManPlanFromCsv -SourceDocumentsCsvPath $SourceDocumentsCsvPath -CaseMappingCsvPath $CaseMappingCsvPath)
+$plan = @(New-RenToMainPlanFromCsv -SourceDocumentsCsvPath $SourceDocumentsCsvPath -CaseMappingCsvPath $CaseMappingCsvPath)
 Write-Host "  $($plan.Count) document(s) in the source CSV"
 
 $planCsv = Join-Path $logDir "candidates_$runStamp.csv"
-Write-RenToManCandidateCsv -Plan $plan -Path $planCsv
+Write-RenToMainCandidateCsv -Plan $plan -Path $planCsv
 
-$copyable = @($plan | Where-Object { Test-RenToManCopyable $_ })
-$skipped = @($plan | Where-Object { -not (Test-RenToManCopyable $_) })
+$copyable = @($plan | Where-Object { Test-RenToMainCopyable $_ })
+$skipped = @($plan | Where-Object { -not (Test-RenToMainCopyable $_) })
 
 Write-Host ''
 Write-Host "Candidate list written to: $planCsv"
@@ -98,19 +98,19 @@ if ($plan.Count -gt 20) {
 
 if (-not $GenerateCopyScript) {
     Write-Host ''
-    Write-Host 'Nur Auflistung (Schritt 4) - es wurde kein Kopierskript erzeugt.'
-    Write-Host 'Erneut mit -GenerateCopyScript aufrufen, um das (DB-unabhaengige) Kopierskript zu erzeugen.'
+    Write-Host 'Listing only (step 4) - no copy script was generated.'
+    Write-Host 'Re-run with -GenerateCopyScript to generate the (database-independent) copy script.'
     return
 }
 
 $copyScriptPath = Join-Path $logDir "copy_script_$runStamp.ps1"
-$genResult = New-RenToManCopyScript -Plan $plan -Path $copyScriptPath
+$genResult = New-RenToMainCopyScript -Plan $plan -Path $copyScriptPath
 
 Write-Host ''
-Write-Host "Kopierskript erzeugt: $($genResult.Path)"
-Write-Host "  enthaltene Kopiervorgaenge: $($genResult.ItemCount)"
+Write-Host "Copy script generated: $($genResult.Path)"
+Write-Host "  copy operations included: $($genResult.ItemCount)"
 Write-Host ''
-Write-Host 'Naechste Schritte:'
-Write-Host "  1. Skript inhaltlich pruefen: $copyScriptPath"
-Write-Host "  2. Separat ausfuehren: $copyScriptPath"
-Write-Host '  3. Danach Report erzeugen: .\Build-RenToManReport.ps1 -LogPath <copy_log_....jsonl aus Schritt 2>'
+Write-Host 'Next steps:'
+Write-Host "  1. Review the script's content: $copyScriptPath"
+Write-Host "  2. Run it separately: $copyScriptPath"
+Write-Host '  3. Then build the report: .\Build-RenToMainReport.ps1 -LogPath <copy_log_....jsonl from step 2>'

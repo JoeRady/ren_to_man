@@ -14,7 +14,7 @@
     at least one of the two must be non-empty.
 
     This also computes SOURCE_PATH using the ASSUMED folder-naming convention
-    (see powershell/README.md / RenToMan.psd1 FolderFormat):
+    (see powershell/README.md / RenToMain.psd1 FolderFormat):
         <root>\<CaseType>\<FamilyNumber (6 digits, zero-padded)>\<Country>\<Extension>\<DOC_FILE_NAME>
     Adjust the padding/casing expressions below if the real folders differ,
     then compare a few rows against Windows Explorer to confirm.
@@ -24,7 +24,7 @@
     this particular result as semicolon-delimited CSV, it would silently
     corrupt those rows. Tab-delimited ("Results to Text", or copy straight
     out of the grid) or comma-delimited CSV are both fine and auto-detected
-    by Run-RenToMan.ps1.
+    by Run-RenToMain.ps1.
 */
 
 :setvar LoginId ""

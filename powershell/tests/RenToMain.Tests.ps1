@@ -1,6 +1,6 @@
 #Requires -Modules Pester
 <#
-    Run with:  Invoke-Pester -Path .\powershell\tests\RenToMan.Tests.ps1
+    Run with:  Invoke-Pester -Path .\powershell\tests\RenToMain.Tests.ps1
 
     These tests cover only the pure logic (CSV joining, script generation,
     copy behaviour of the generated script against a local temp folder) - no
@@ -15,7 +15,7 @@
 #>
 
 BeforeAll {
-    Import-Module (Join-Path $PSScriptRoot '..\RenToMan.psd1') -Force
+    Import-Module (Join-Path $PSScriptRoot '..\RenToMain.psd1') -Force
 }
 
 Describe 'Get-LongPath' {
@@ -27,26 +27,26 @@ Describe 'Get-LongPath' {
     }
 }
 
-Describe 'ConvertTo-RenToManPsStringLiteral' {
+Describe 'ConvertTo-RenToMainPsStringLiteral' {
     It 'escapes single quotes so the value round-trips through Invoke-Expression' {
-        $literal = ConvertTo-RenToManPsStringLiteral "O'Brien ümlaut ' pdf"
+        $literal = ConvertTo-RenToMainPsStringLiteral "O'Brien ümlaut ' pdf"
         $value = Invoke-Expression $literal
         $value | Should -Be "O'Brien ümlaut ' pdf"
     }
 
     It 'renders $null for a null value' {
-        ConvertTo-RenToManPsStringLiteral $null | Should -Be '$null'
+        ConvertTo-RenToMainPsStringLiteral $null | Should -Be '$null'
     }
 }
 
-Describe 'Get-RenToManCsvDelimiter' {
+Describe 'Get-RenToMainCsvDelimiter' {
     It 'detects a semicolon-delimited header (e.g. German-locale SSMS export)' {
         $tmpRoot = Join-Path ([System.IO.Path]::GetTempPath()) ([Guid]::NewGuid())
         New-Item -ItemType Directory -Path $tmpRoot | Out-Null
         try {
             $path = Join-Path $tmpRoot 'semi.csv'
             Set-Content -Path $path -Value 'A;B;C' -Encoding UTF8
-            Get-RenToManCsvDelimiter -Path $path | Should -Be ';'
+            Get-RenToMainCsvDelimiter -Path $path | Should -Be ';'
         }
         finally {
             Remove-Item -LiteralPath $tmpRoot -Recurse -Force -ErrorAction SilentlyContinue
@@ -59,7 +59,7 @@ Describe 'Get-RenToManCsvDelimiter' {
         try {
             $path = Join-Path $tmpRoot 'comma.csv'
             Set-Content -Path $path -Value 'A,B,C' -Encoding UTF8
-            Get-RenToManCsvDelimiter -Path $path | Should -Be ','
+            Get-RenToMainCsvDelimiter -Path $path | Should -Be ','
         }
         finally {
             Remove-Item -LiteralPath $tmpRoot -Recurse -Force -ErrorAction SilentlyContinue
@@ -72,7 +72,7 @@ Describe 'Get-RenToManCsvDelimiter' {
         try {
             $path = Join-Path $tmpRoot 'tab.csv'
             Set-Content -Path $path -Value "A`tB`tC" -Encoding UTF8
-            Get-RenToManCsvDelimiter -Path $path | Should -Be "`t"
+            Get-RenToMainCsvDelimiter -Path $path | Should -Be "`t"
         }
         finally {
             Remove-Item -LiteralPath $tmpRoot -Recurse -Force -ErrorAction SilentlyContinue
@@ -80,7 +80,7 @@ Describe 'Get-RenToManCsvDelimiter' {
     }
 }
 
-Describe 'New-RenToManPlanFromCsv' {
+Describe 'New-RenToMainPlanFromCsv' {
     BeforeEach {
         $script:tmpRoot = Join-Path ([System.IO.Path]::GetTempPath()) ([Guid]::NewGuid())
         New-Item -ItemType Directory -Path $tmpRoot | Out-Null
@@ -108,10 +108,10 @@ Describe 'New-RenToManPlanFromCsv' {
             }
         ) | Export-Csv -Path $mappingCsv -NoTypeInformation -Encoding UTF8
 
-        $plan = @(New-RenToManPlanFromCsv -SourceDocumentsCsvPath $sourceCsv -CaseMappingCsvPath $mappingCsv)
+        $plan = @(New-RenToMainPlanFromCsv -SourceDocumentsCsvPath $sourceCsv -CaseMappingCsvPath $mappingCsv)
 
         $plan.Count | Should -Be 1
-        Test-RenToManCopyable $plan[0] | Should -Be $true
+        Test-RenToMainCopyable $plan[0] | Should -Be $true
         $plan[0].SourcePath | Should -Be '\\brifile\Renewals\Patricia\documents\2\666777\DE\EP\reminder_ümlaut.pdf'
         $plan[0].TargetPath | Should -Be '\\brimain\Main\Patricia\documents\2\666777\DE\EP\reminder_ümlaut.pdf'
     }
@@ -132,10 +132,10 @@ Describe 'New-RenToManPlanFromCsv' {
         # Import-Csv needs a header row even for zero data rows.
         Set-Content -Path $mappingCsv -Value '"RENEWALS_CASE_ID","MAIN_LIVE_CASE_ID","TARGET_FOLDER"' -Encoding UTF8
 
-        $plan = @(New-RenToManPlanFromCsv -SourceDocumentsCsvPath $sourceCsv -CaseMappingCsvPath $mappingCsv)
+        $plan = @(New-RenToMainPlanFromCsv -SourceDocumentsCsvPath $sourceCsv -CaseMappingCsvPath $mappingCsv)
 
         $plan.Count | Should -Be 1
-        Test-RenToManCopyable $plan[0] | Should -Be $false
+        Test-RenToMainCopyable $plan[0] | Should -Be $false
         $plan[0].SkipReason | Should -Match 'mapping'
     }
 
@@ -158,10 +158,10 @@ Describe 'New-RenToManPlanFromCsv' {
         )
         Set-Content -Path $mappingCsv -Value $mappingLines -Encoding UTF8
 
-        $plan = @(New-RenToManPlanFromCsv -SourceDocumentsCsvPath $sourceCsv -CaseMappingCsvPath $mappingCsv)
+        $plan = @(New-RenToMainPlanFromCsv -SourceDocumentsCsvPath $sourceCsv -CaseMappingCsvPath $mappingCsv)
 
         $plan.Count | Should -Be 1
-        Test-RenToManCopyable $plan[0] | Should -Be $true
+        Test-RenToMainCopyable $plan[0] | Should -Be $true
         $plan[0].TargetPath | Should -Be 'D:\Main\Patricia\documents\2\666777\DE\EP\f.pdf'
     }
 
@@ -183,16 +183,16 @@ Describe 'New-RenToManPlanFromCsv' {
         )
         Set-Content -Path $mappingCsv -Value $mappingLines -Encoding UTF8
 
-        $plan = @(New-RenToManPlanFromCsv -SourceDocumentsCsvPath $sourceCsv -CaseMappingCsvPath $mappingCsv)
+        $plan = @(New-RenToMainPlanFromCsv -SourceDocumentsCsvPath $sourceCsv -CaseMappingCsvPath $mappingCsv)
 
         $plan.Count | Should -Be 1
-        Test-RenToManCopyable $plan[0] | Should -Be $true
+        Test-RenToMainCopyable $plan[0] | Should -Be $true
         $plan[0].DocFileName | Should -Be '4778705;21165771 1151382.TIF'
         $plan[0].TargetPath | Should -Be 'D:\Main\Patricia\documents\2\110278\CN\PC\4778705;21165771 1151382.TIF'
     }
 }
 
-Describe 'New-RenToManCopyScript' {
+Describe 'New-RenToMainCopyScript' {
     BeforeEach {
         $script:tmpRoot = Join-Path ([System.IO.Path]::GetTempPath()) ([Guid]::NewGuid())
         New-Item -ItemType Directory -Path $tmpRoot | Out-Null
@@ -216,7 +216,7 @@ Describe 'New-RenToManCopyScript' {
         })
 
         $scriptPath = Join-Path $tmpRoot 'copy_script.ps1'
-        $genResult = New-RenToManCopyScript -Plan $plan -Path $scriptPath
+        $genResult = New-RenToMainCopyScript -Plan $plan -Path $scriptPath
 
         $genResult.ItemCount | Should -Be 1
         Test-Path -LiteralPath $scriptPath | Should -Be $true
@@ -249,14 +249,14 @@ Describe 'New-RenToManCopyScript' {
         })
 
         $scriptPath = Join-Path $tmpRoot 'copy_script.ps1'
-        $genResult = New-RenToManCopyScript -Plan $plan -Path $scriptPath
+        $genResult = New-RenToMainCopyScript -Plan $plan -Path $scriptPath
 
         $genResult.ItemCount | Should -Be 0
         $genResult.SkippedAtPlanning | Should -Be 1
     }
 }
 
-Describe 'Write-RenToManCandidateCsv' {
+Describe 'Write-RenToMainCandidateCsv' {
     It 'writes a CSV with the expected columns' {
         $tmpRoot = Join-Path ([System.IO.Path]::GetTempPath()) ([Guid]::NewGuid())
         New-Item -ItemType Directory -Path $tmpRoot | Out-Null
@@ -268,7 +268,7 @@ Describe 'Write-RenToManCandidateCsv' {
             })
             $csvPath = Join-Path $tmpRoot 'candidates.csv'
 
-            Write-RenToManCandidateCsv -Plan $plan -Path $csvPath
+            Write-RenToMainCandidateCsv -Plan $plan -Path $csvPath
 
             $rows = @(Import-Csv -LiteralPath $csvPath)
             $rows.Count | Should -Be 1

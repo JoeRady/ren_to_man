@@ -1,176 +1,175 @@
-# ren_to_man (PowerShell)
+# RenToMain (PowerShell)
 
-Findet Patricia-Dokumente, die von der **Renewals**- in die **Main**-Instanz
-kopiert werden sollen, und erzeugt daraus ein prüfbares Kopierskript.
+Finds Patricia documents that need to be copied from the **Renewals**
+instance to the **Main** instance, and produces a reviewable copy script for
+them.
 
-## Wichtig: PowerShell Constrained Language Mode
+## Important: PowerShell Constrained Language Mode
 
-Viele Corporate-Windows-Rechner laufen mit PowerShell im **Constrained
-Language Mode** (durchgesetzt über AppLocker/WDAC-Richtlinien). In diesem
-Modus sind Methodenaufrufe auf "Nicht-Core"-.NET-Typen blockiert — das
-betrifft insbesondere direkten SQL-Server-Zugriff über
-`System.Data.SqlClient` (und jede andere ADO.NET-/COM-basierte Alternative
-genauso).
+Many corporate Windows machines run PowerShell under **Constrained Language
+Mode** (enforced by AppLocker/WDAC policies). In this mode, method calls on
+"non-core" .NET types are blocked - this affects direct SQL Server access
+via `System.Data.SqlClient` in particular (and any other ADO.NET-/COM-based
+alternative just the same).
 
-**Deshalb spricht dieses Werkzeug die Datenbanken gar nicht mehr selbst an.**
-Stattdessen:
+**That's why this tool no longer talks to the databases itself.** Instead:
 
-1. Du führst die beiden SQL-Skripte aus [`sql/`](sql/) selbst in deinem
-   SQL-Client (z.B. **SSMS**) aus und exportierst die Ergebnisse als CSV.
-2. `Run-RenToMan.ps1` liest nur noch diese beiden CSV-Dateien ein (per
-   `Import-Csv`), verknüpft sie und baut daraus die Kopierliste. Das
-   verwendet ausschließlich "Core Types" (Strings, Arrays, Hashtables,
-   PSCustomObjects) und eingebaute Cmdlets — funktioniert also auch unter
-   Constrained Language Mode einwandfrei, unabhängig von Adminrechten oder
-   installierten Zusatzmodulen.
+1. You run the two SQL scripts from [`sql/`](sql/) yourself in your SQL
+   client (e.g. **SSMS**) and export the results as CSV.
+2. `Run-RenToMain.ps1` only reads those two CSV files (via `Import-Csv`),
+   joins them, and builds the copy list from that. This uses exclusively
+   "core types" (strings, arrays, hashtables, PSCustomObjects) and built-in
+   cmdlets - so it works fine under Constrained Language Mode, regardless of
+   admin rights or installed extra modules.
 
-So bleibt außerdem das Sicherheitsmodell aus der letzten Iteration erhalten:
-Das Tool hat **nie** Schreibzugriff auf die Datenbank (es hat nach diesem
-Umbau überhaupt keinen DB-Zugriff mehr), und das eigentliche Kopieren
-passiert über ein separates, reviewbares Skript ohne jede Datenbankabhängigkeit.
+This also keeps the security model from the previous iteration intact: the
+tool **never** has write access to the database (after this change it has no
+database access at all), and the actual copying happens through a separate,
+reviewable script with no database dependency whatsoever.
 
-> Getestet gegen: PowerShell 7.5.1 unter Constrained Language Mode, ohne
-> `sqlcmd.exe` und ohne `SqlServer`/`SQLPS`-Modul — also den kleinsten
-> gemeinsamen Nenner. Falls bei euch doch `sqlcmd`/`SqlServer`-Modul verfügbar
-> ist oder ihr in FullLanguage-Mode lauft, könnt ihr die SQL-Skripte
-> natürlich trotzdem genauso gut damit ausführen statt mit SSMS.
+> Tested against: PowerShell 7.5.1 under Constrained Language Mode, without
+> `sqlcmd.exe` and without the `SqlServer`/`SQLPS` module - i.e. the lowest
+> common denominator. If `sqlcmd`/the `SqlServer` module happens to be
+> available in your environment, or you're running in FullLanguage mode, you
+> can of course still run the SQL scripts with those instead of SSMS.
 
-## Ablauf
+## Workflow
 
-**Schritt 1-4: SQL-Abfragen in SSMS ausführen und als CSV exportieren**
+**Steps 1-4: run the SQL queries in SSMS and export as CSV**
 
-1. [`sql/01_source_documents.sql`](sql/01_source_documents.sql) gegen
-   `SQLSRV01\REN01` / `Patricia` ausführen. SSMS: Query-Menü → "SQLCMD Mode"
-   aktivieren, dann oben im Skript `LoginId`/`CategoryId`/`FromDate`/
-   `ToDate`/`SourceRoot` setzen. Ergebnis exportieren: Rechtsklick auf das
-   Ergebnisraster → "Save Results As..." → CSV, z.B. als
-   `source_documents.csv`.
-2. [`sql/02_case_mapping_and_target_paths.sql`](sql/02_case_mapping_and_target_paths.sql)
-   gegen `SQLSRV01\MAIN01` / `Patricia_Main_Live` ausführen (`TargetRoot`
-   setzen). Das ist eine Referenztabelle ohne Bezug zum Suchzeitraum — als
-   `case_mapping.csv` exportieren und über mehrere Läufe hinweg
-   wiederverwenden; nur neu exportieren, wenn neue Case-Mappings dazugekommen
-   sind.
+1. Run [`sql/01_source_documents.sql`](sql/01_source_documents.sql) against
+   `SQLSRV01\REN01` / `Patricia`. In SSMS: Query menu -> enable "SQLCMD
+   Mode", then set `LoginId`/`CategoryId`/`FromDate`/`ToDate`/`SourceRoot` at
+   the top of the script. Export the result: right-click the result grid ->
+   "Save Results As..." -> CSV, e.g. as `source_documents.csv`.
+2. Run [`sql/02_case_mapping_and_target_paths.sql`](sql/02_case_mapping_and_target_paths.sql)
+   against `SQLSRV01\MAIN01` / `Patricia_Main_Live` (set `TargetRoot`). This
+   is a reference table with no relation to the search period - export it
+   once as `case_mapping.csv` and reuse it across runs; only re-export when
+   new case mappings have been added.
 
-Beide Skripte sind reine `SELECT`-Abfragen und berechnen den Quell- bzw.
-Zielordnerpfad bereits direkt in SQL (Spalte `SOURCE_PATH` bzw.
-`TARGET_FOLDER`) — die verwendete Ordner-Namenskonvention (Padding,
-Groß-/Kleinschreibung) steht als Kommentar im jeweiligen Skript und sollte
-anhand ein paar echter Ergebniszeilen gegen den Windows-Explorer verifiziert
-werden, bevor ein Kopierskript erzeugt wird.
+Both scripts are pure `SELECT` queries and already compute the source/target
+folder path directly in SQL (columns `SOURCE_PATH` / `TARGET_FOLDER`) - the
+assumed folder-naming convention (padding, upper/lower casing) is documented
+as a comment in each script and should be verified against a few real rows
+via Windows Explorer before generating a copy script.
 
-**Schritt 4 (Fortsetzung): CSVs verknüpfen und auflisten**
+**Step 4 (continued): join the CSVs and list candidates**
 
 ```powershell
 cd powershell
-.\Run-RenToMan.ps1 -SourceDocumentsCsvPath .\source_documents.csv -CaseMappingCsvPath .\case_mapping.csv
+.\Run-RenToMain.ps1 -SourceDocumentsCsvPath .\source_documents.csv -CaseMappingCsvPath .\case_mapping.csv
 ```
 
-Schreibt `logs\candidates_<timestamp>.csv` mit allen gefundenen Dokumenten
-(`DOC_LOG_ID`, `LOG_DATE`, `DOC_NAME`, `DOC_FILE_NAME`, Quellpfad, Zielpfad,
-ggf. Skip-Grund) und zeigt die ersten 20 Zeilen in der Konsole.
+Writes `logs\candidates_<timestamp>.csv` with all found documents
+(`DOC_LOG_ID`, `LOG_DATE`, `DOC_NAME`, `DOC_FILE_NAME`, source path, target
+path, skip reason if any) and prints the first 20 rows to the console.
 
-**Schritt 5: Kopierskript erzeugen (immer noch nichts wird kopiert)**
+**Step 5: generate the copy script (still nothing is copied)**
 
 ```powershell
-.\Run-RenToMan.ps1 -SourceDocumentsCsvPath .\source_documents.csv -CaseMappingCsvPath .\case_mapping.csv -GenerateCopyScript
+.\Run-RenToMain.ps1 -SourceDocumentsCsvPath .\source_documents.csv -CaseMappingCsvPath .\case_mapping.csv -GenerateCopyScript
 ```
 
-Erzeugt zusätzlich `logs\copy_script_<timestamp>.ps1`. Dieses Skript:
+Additionally writes `logs\copy_script_<timestamp>.ps1`. That script:
 
-- braucht **keine Datenbankverbindung**,
-- enthält am Anfang lesbar die Liste aller geplanten Kopiervorgänge,
-- legt fehlende Zielordner an, überspringt bereits vorhandene Zieldateien
-  (überschreibt nie),
-- behandelt Dateinamen inkl. Umlaute korrekt,
-- fragt vor dem Start eine Bestätigung ab (`JA` eingeben, oder `-Force`),
-- schreibt sein eigenes JSONL-Log (`copy_log_<timestamp>.jsonl`) neben sich,
-- nutzt selbst keine Konstrukte, die unter Constrained Language Mode
-  blockiert wären (kein `StringBuilder`, keine generischen .NET-Collections).
+- needs **no database connection**,
+- lists all planned copy operations readably at the top,
+- creates missing target folders, skips a file if the target already exists
+  (never overwrites),
+- handles filenames with umlauts and other non-ASCII characters correctly,
+- prompts for confirmation before starting (type `YES`, or pass `-Force` to
+  skip the prompt),
+- writes its own JSONL log (`copy_log_<timestamp>.jsonl`) next to itself,
+- uses no constructs that would be blocked under Constrained Language Mode
+  (no `StringBuilder`, no generic .NET collections).
 
 ```powershell
-notepad .\logs\copy_script_20260101_120000.ps1   # erst lesen!
-.\logs\copy_script_20260101_120000.ps1           # fragt vor dem Kopieren nach Bestaetigung
+notepad .\logs\copy_script_20260101_120000.ps1   # review first!
+.\logs\copy_script_20260101_120000.ps1           # asks for confirmation before copying
 ```
 
-**Schritt 6: Report erzeugen**
+**Step 6: build the report**
 
 ```powershell
-.\Build-RenToManReport.ps1 -LogPath .\logs\copy_log_20260101_120000.jsonl
+.\Build-RenToMainReport.ps1 -LogPath .\logs\copy_log_20260101_120000.jsonl
 ```
 
 ## Setup
 
-1. Ordner `powershell/` auf die Corporate-Maschine kopieren.
-2. `RenToMan.config.example.psd1` nach `RenToMan.config.psd1` kopieren
-   (steuert nur noch, wohin Logs/CSVs/Skripte geschrieben werden).
-3. Falls die Ausführung von Skripten standardmäßig blockiert ist: IT nach dem
-   korrekten Weg fragen (Signierung, Ausnahme, o.ä.) — `Set-ExecutionPolicy
-   -Scope Process -ExecutionPolicy Bypass` funktioniert nur, wenn eure
-   Richtlinie das überhaupt zulässt.
+1. Copy the `powershell/` folder to the corporate machine.
+2. Copy `RenToMain.config.example.psd1` to `RenToMain.config.psd1` (this
+   only controls where logs/CSVs/scripts get written to).
+3. If script execution is blocked by default: ask IT about the correct way
+   to allow it (signing, an exception, etc.) - `Set-ExecutionPolicy -Scope
+   Process -ExecutionPolicy Bypass` only works if your policy allows it in
+   the first place.
 
-## Struktur
+## Structure
 
 ```
 powershell/
-  RenToMan.psd1                    Modul-Manifest
-  RenToMan.psm1                    CSV-Join, Pfadaufbau-Hilfsfunktionen, Kopierskript-Generator
-                                    (kein Datenbankzugriff, Constrained-Language-Mode-sicher)
-  RenToMan.config.example.psd1     Vorlage fuer Konfiguration (nur noch Logging.LogDir)
-  Run-RenToMan.ps1                 Schritt 4 (+ optional Skript-Generierung fuer Schritt 5)
-  Build-RenToManReport.ps1         Schritt 6: Report aus dem JSONL-Log des Kopierskripts
+  RenToMain.psd1                    Module manifest
+  RenToMain.psm1                    CSV join, path-building helpers, copy script generator
+                                     (no database access, Constrained-Language-Mode safe)
+  RenToMain.config.example.psd1     Configuration template (just Logging.LogDir)
+  Run-RenToMain.ps1                 Step 4 (+ optional script generation for step 5)
+  Build-RenToMainReport.ps1         Step 6: report from the copy script's JSONL log
   sql/
-    01_source_documents.sql        Schritt 1-4, Teil 1: Quelldokumente (REN01), SOURCE_PATH bereits berechnet
+    01_source_documents.sql         Steps 1-4, part 1: source documents (REN01), SOURCE_PATH pre-computed
     02_case_mapping_and_target_paths.sql
-                                    Schritt 1-4, Teil 2: Case-ID-Mapping + TARGET_FOLDER (MAIN01), ungefiltert
+                                     Steps 1-4, part 2: case-ID mapping + TARGET_FOLDER (MAIN01), unfiltered
     03_full_candidate_list_linked_server_optional.sql
-                                    Optional: alles in einer Query, falls ein Linked Server existiert
+                                     Optional: everything in one query, if a linked server exists
   tests/
-    RenToMan.Tests.ps1             Pester-Tests fuer die DB-unabhaengige Logik
+    RenToMain.Tests.ps1             Pester tests for the database-independent logic
 ```
 
-### SQL separat testen
+### Testing the SQL separately
 
-Die beiden Skripte in `sql/` sind unabhängig vom PowerShell-Tool direkt in
-SSMS oder per `sqlcmd` (falls vorhanden) testbar — reine `SELECT`-Abfragen,
-es wird nichts verändert. Jedes Skript nutzt `:setvar`-Variablen (SSMS:
-"SQLCMD Mode" im Query-Menü aktivieren), sodass Login/Kategorie/Zeitraum/
-Pfade ohne Codeänderung durchgetestet werden können.
+The two scripts in `sql/` can be tested independently of the PowerShell
+tool, directly in SSMS or via `sqlcmd` (if available) - pure `SELECT`
+queries, nothing gets changed. Each script uses `:setvar` variables (SSMS:
+enable "SQLCMD Mode" in the Query menu), so login/category/period/paths can
+be tried out without changing the code.
 
-Falls ein Linked Server von MAIN01 nach REN01 existiert, liefert
-`03_full_candidate_list_linked_server_optional.sql` das komplette Ergebnis
-(Quell- und Zielpfad, Skip-Grund) in einer einzigen Abfrage — rein optional,
-für den normalen Ablauf oben nicht nötig.
+If a linked server from MAIN01 to REN01 exists,
+`03_full_candidate_list_linked_server_optional.sql` returns the complete
+result (source and target path, skip reason) in a single query - entirely
+optional, not needed for the normal workflow above.
 
 ### Tests
 
 ```powershell
-Install-Module Pester -Scope CurrentUser   # falls noch nicht vorhanden
-Invoke-Pester -Path .\tests\RenToMan.Tests.ps1
+Install-Module Pester -Scope CurrentUser   # if not already present
+Invoke-Pester -Path .\tests\RenToMain.Tests.ps1
 ```
 
-Diese Tests wurden **nicht** in der Linux-Entwicklungsumgebung ausgeführt, da
-dort kein PowerShell verfügbar ist — bitte auf der Corporate-Maschine laufen
-lassen und Auffälligkeiten zurückmelden. Sie decken bewusst nur Logik ab, die
-ausschließlich "Core Types" verwendet, damit sie auch unter Constrained
-Language Mode aussagekräftig sind.
+These tests were **not** executed in the Linux development environment this
+tool was authored in, since no PowerShell is available there - please run
+them on your Windows machine and report anything unexpected. They
+deliberately only exercise logic that uses "core types", so they stay
+meaningful under Constrained Language Mode too.
 
-## Bekannte Annahmen / offene Punkte für weitere Iterationen
+## Known assumptions / open points for future iterations
 
-- **Ordner-Namenskonvention** ist als Best-Guess direkt in den SQL-Skripten
-  (`sql/01...`, `sql/02...`) hinterlegt (Padding, Groß-/Kleinschreibung) —
-  beide Skripte im Sync halten, falls die reale Struktur abweicht.
-- Es wird angenommen, dass genau eine Datei pro `PAT_DOC_LOG`-Eintrag
-  existiert (`DOC_FILE_NAME` im Case-Ordner).
-- Es wird bislang **kein** `PAT_DOC_LOG`-Eintrag auf der Main-Seite angelegt —
-  es werden nur die Dateien auf dem Filesystem kopiert.
-- Bereits vorhandene Zieldateien werden übersprungen, nicht überschrieben.
-- `case_mapping.csv` (Schritt 2) ist eine Referenztabelle ohne Bezug zum
-  Suchzeitraum — sie muss nicht bei jedem Lauf neu exportiert werden, nur
-  wenn neue Case-Mappings hinzukommen.
-- Falls sich herausstellt, dass Constrained Language Mode bei euch doch nicht
-  gilt (bzw. IT das ändert) oder `sqlcmd`/`SqlServer`-Modul verfügbar wird,
-  könnte eine direkte DB-Anbindung wieder ergänzt werden — aktuell bewusst
-  nicht eingebaut, um nicht von einer möglicherweise unbeabsichtigten
-  Richtlinien-Lücke (z.B. elevierte Sessions mit `FullLanguage`) abhängig zu
-  sein.
+- The **folder-naming convention** is a best guess baked directly into the
+  SQL scripts (`sql/01...`, `sql/02...`) - padding, upper/lower casing -
+  keep both scripts in sync if the real structure differs.
+- Assumes exactly one file per `PAT_DOC_LOG` entry (`DOC_FILE_NAME` inside
+  the case folder).
+- No `PAT_DOC_LOG` entry is created on the Main side yet - only the
+  filesystem copy happens.
+- Existing target files are skipped, never overwritten.
+- `case_mapping.csv` (step 2) is a reference table unrelated to the search
+  period - it doesn't need to be re-exported on every run, only when new
+  case mappings are added.
+- Real `DOC_FILE_NAME` values can contain a literal `;` - never export
+  `source_documents.csv` as semicolon-delimited CSV, it would silently
+  corrupt those rows. Tab-delimited and comma-delimited exports are both
+  fine and auto-detected.
+- If it turns out Constrained Language Mode doesn't actually apply to you
+  (or IT changes that), or `sqlcmd`/the `SqlServer` module becomes
+  available, a direct database connection could be added back in - it's
+  deliberately not built in right now, so as not to depend on a possibly
+  unintended policy gap (e.g. elevated sessions running in `FullLanguage`).
